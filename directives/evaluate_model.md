@@ -6,31 +6,32 @@ tags: [layer/directive]
 # evaluate_model
 
 ## Purpose
-Assess model performance across regimes/windows before promotion.
+Assess model performance across regimes and windows to detect drift and validate improvements before promotion.
 
 ## Inputs
-- `model_runs` artifacts/metrics
-- Walk-forward slices (features + labels)
-- Benchmark (SPY excess return)
+- `model_runs` artifacts and metrics
+- Holdout or walk-forward slices (labels + features)
+- Benchmark comparisons (SPY excess return)
 
 ## Outputs
-- Evaluation report with metrics per period
-- Drift indicators and promotion notes
-- Run log for model_eval
+- Evaluation report (metrics per period, confusion stats, calibration)
+- Drift indicators (prediction/feature distribution shifts)
+- Promotion decision notes; `pipeline_runs` entry for stage=model_eval
 
 ## Tools/Scripts (links to execution scripts)
 - [[20_EXECUTION/evaluate_model]]
 
 ## Edge cases
-- Time-based splits to avoid leakage
-- Unbalanced classes; monitor precision/recall
-- Regime shifts; flag for retrain/feature review
+- Data leakage; ensure splits respect time
+- Unbalanced classes; track precision/recall, not just accuracy
+- Regime shifts causing metric instability; flag for retrain or feature review
 
 ## Run steps
-1. Load candidate + baseline outputs.
-2. Compute metrics per period; compare uplift vs baseline.
-3. Check prediction/feature shifts.
-4. Summarize promotion recommendation + risks; log results.
+1. Load candidate and baseline model outputs over evaluation windows.
+2. Compute metrics per year/regime; include uplift vs baseline.
+3. Check prediction/feature distribution shifts.
+4. Summarize promotion recommendation and risks.
+5. Log results and update monitoring dashboards.
 
 ## Learnings / Updates
 - 

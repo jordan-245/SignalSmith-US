@@ -6,32 +6,33 @@ tags: [layer/directive]
 # run_model
 
 ## Purpose
-Train/score the daily ranking model to produce pre-open predictions + explanations.
+Train and score the daily ranking model using the latest features, producing predictions and explanations before market open.
 
 ## Inputs
-- `features_daily` + feature_set_version
-- `labels` and model configs
-- Universe version, train window, horizons
+- `features_daily` (with feature_set_version)
+- `labels` for training windows
+- Model configs (LightGBM/XGBoost primary, logistic regression baseline)
+- Universe version and run parameters (train window, horizons)
 
 ## Outputs
-- `model_runs` with metrics/artifact ref
-- `predictions` with scores/ranks/explanations
-- Run log entry for model_runner
+- `model_runs` record with metrics and artifact reference
+- `predictions` rows with scores, ranks, explanation_json
+- `pipeline_runs` entry for stage=model_runner
 
 ## Tools/Scripts (links to execution scripts)
 - [[20_EXECUTION/run_model]]
 
 ## Edge cases
-- Stale/incomplete features; halt scoring if low coverage
-- Short training windows; compare against baseline
-- Drift/regime shifts; log warnings
+- Stale or incomplete features; halt scoring if coverage below threshold
+- Small training window causing overfit/underfit; fall back to baseline
+- Feature drift/regime shifts; log warnings for monitoring
 
 ## Run steps
-1. Pick train/validation slices.
-2. Train primary + baseline; compare metrics.
-3. Persist artifacts/metrics with versions.
-4. Score current date; produce ranks/explanations.
-5. Write `predictions`; log stats/warnings.
+1. Select training slice (rolling 3-5y) and validation slice (next period).
+2. Train primary model; evaluate; train baseline for comparison.
+3. Persist metrics/artifacts with feature_set_version and universe version.
+4. Score current date for universe; produce ranks and explanations.
+5. Write `predictions` and log run stats; mark warnings if metrics degrade.
 
 ## Learnings / Updates
 - 

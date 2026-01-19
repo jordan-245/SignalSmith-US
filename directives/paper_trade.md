@@ -6,30 +6,34 @@ tags: [layer/directive]
 # paper_trade
 
 ## Purpose
-Turn predictions into paper trades with VWAP fills and 5-day min-hold.
+Generate daily paper trades from model predictions using VWAP fills, enforce 5-day minimum hold, and track portfolio performance.
 
 ## Inputs
-- Top 10 `predictions`
-- `prices_daily`/VWAP proxy
-- Portfolio config + positions
+- `predictions` (Top 10)
+- `prices_daily`/VWAP or proxy
+- Portfolio config (starting_cash=$5k, equal weight, fees/slippage)
+- Existing positions and eligible_sell_date
 
 ## Outputs
 - `paper_orders`, `paper_fills`, `paper_positions`, `paper_equity_curve`
-- Portfolio metrics + run log
+- Portfolio metrics and warnings
+- `pipeline_runs` entry for stage=paper_broker
 
 ## Tools/Scripts (links to execution scripts)
 - [[20_EXECUTION/paper_trade]]
 
 ## Edge cases
-- Holiday/missing prices/VWAP proxy
-- Not sell-eligible (min-hold)
-- Cash/rounding issues; adjust and log
+- No trading day (holiday) or missing prices/VWAP proxy
+- Positions not yet sell-eligible (min-hold constraint)
+- Cash shortfalls; adjust orders to respect capital and costs
+- Rounding/lot size issues; log adjustments
 
 ## Run steps
-1. Load predictions + positions; split sell-eligible.
-2. Keep non-eligible; queue sells for eligible not in Top 10.
-3. Allocate to Top 10; generate orders with fees/slippage.
-4. Apply VWAP/proxy fills; update positions/equity; log stats.
+1. Load predictions and current positions; filter sell-eligible holdings.
+2. Keep non-eligible holdings; queue sells for eligible holdings not in Top 10.
+3. Allocate remaining weight to Top 10; generate buy/sell orders with fees/slippage.
+4. Apply VWAP or proxy fills; update positions, equity, and drawdown metrics.
+5. Persist orders/fills/positions/equity; log run stats and warnings.
 
 ## Learnings / Updates
 - 
