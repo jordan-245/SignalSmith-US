@@ -29,10 +29,10 @@ Generate daily paper trades from model predictions using VWAP fills, enforce 5-d
 - Rounding/lot size issues; log adjustments
 
 ## Run steps
-1. Load predictions and current positions; filter sell-eligible holdings.
+1. Ensure paper portfolio exists; load predictions, latest positions, and latest equity.
 2. Keep non-eligible holdings; queue sells for eligible holdings not in Top 10.
-3. Allocate remaining weight to Top 10; generate buy/sell orders with fees/slippage.
-4. Apply VWAP or proxy fills; update positions, equity, and drawdown metrics.
+3. Allocate remaining cash across new Top 10 tickers; generate buy/sell orders with fees/slippage.
+4. Apply VWAP proxy fills from OHLC; update positions, equity, drawdown, turnover.
 5. Persist orders/fills/positions/equity; log run stats and warnings.
 
 ## Learnings / Updates
