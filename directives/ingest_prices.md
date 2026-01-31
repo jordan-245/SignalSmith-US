@@ -34,4 +34,4 @@ Pull daily OHLCV for S&P 500 tickers and SPY and persist before feature building
 5. Log `pipeline_runs` with stats and warnings.
 
 ## Learnings / Updates
-- 
+- Coverage warnings may occur if Yahoo Finance omits tickers with symbol changes or dot tickers; expect partial coverage and log missing tickers for follow-up.

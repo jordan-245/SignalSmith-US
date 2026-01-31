@@ -35,4 +35,5 @@ Aggregate market and document-derived signals into daily features keyed by (date
 5. Write to `features_daily`; log coverage and warnings.
 
 ## Learnings / Updates
-- 
+- Large date windows can hit connection resets with Supabase; build in smaller ranges (e.g., 3–4 month chunks).
+- For end-of-range scoring, ensure the start date goes back far enough for rolling windows; `--start-date 2025-11-01 --end-date 2026-01-30` succeeded where a 2026-only window produced no features.

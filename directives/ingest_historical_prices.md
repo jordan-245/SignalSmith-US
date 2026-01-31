@@ -33,4 +33,6 @@ Backfill historical OHLCV for S&P 500 tickers and SPY to support feature/label r
 5. Log backfill stats and any gaps for follow-up.
 
 ## Learnings / Updates
-- 
+- Backfills over ~1y for ~500 tickers can take >10 minutes; use chunking to avoid timeouts.
+- Recommended flags: `--chunk-days 120 --tickers-per-batch 200` (observed ~12–13 min, 4 chunks).
+- Yahoo Finance may fail for tickers with dots or recent symbol changes (e.g., `BRK.B`, `BF.B`, `IPG`, `WBA`, `FI`, `K`). Expect “possibly delisted / no timezone” errors; capture in warnings and proceed.
