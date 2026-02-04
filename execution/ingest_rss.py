@@ -28,6 +28,8 @@ from typing import List
 
 import feedparser
 
+from journal import journal_run, journal_watch
+
 
 def parse_args() -> argparse.Namespace:
     today = dt.date.today().isoformat()
@@ -85,15 +87,20 @@ def main() -> None:
         return
 
     urls: List[str] = []
+    feed_failures = 0
     for f in feeds:
         try:
             for u in discover_urls(f, args.timeout):
                 if u not in urls:
                     urls.append(u)
         except Exception as exc:
+            feed_failures += 1
             print(f"[rss] feed failed: {f} ({exc})")
 
     if not urls:
+        journal_run("ingest_rss", "ok", f"feeds={len(feeds)} urls=0 failures={feed_failures}")
+        if feed_failures:
+            journal_watch(f"ingest_rss feed failures={feed_failures}")
         print("[rss] No URLs discovered.")
         return
 
@@ -121,7 +128,10 @@ def main() -> None:
         str(args.max_items),
     ]
     print(f"[rss] Discovered {len(urls)} URL(s); invoking ingest_docs.py")
-    subprocess.run(cmd, check=False)
+    rc = subprocess.run(cmd, check=False).returncode
+    journal_run("ingest_rss", "ok" if rc == 0 else "warn", f"feeds={len(feeds)} urls={len(urls)} failures={feed_failures} rc={rc}")
+    if feed_failures or rc != 0:
+        journal_watch(f"ingest_rss had issues: feed_failures={feed_failures} rc={rc}")
 
 
 if __name__ == "__main__":

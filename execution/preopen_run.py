@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from typing import List, Tuple
 
+from journal import journal_run, journal_watch
+
 
 def parse_args() -> argparse.Namespace:
     today = dt.date.today().isoformat()
@@ -78,6 +80,7 @@ def main() -> None:
 
     # Skip on non-trading days (weekends/holidays) so cron can run daily safely.
     if not market_is_open(args.date):
+        journal_run("preopen_run", "skipped", f"market closed date={args.date}")
         print(f"[preopen_run] Market closed on {args.date}; skipping.")
         return
 
@@ -133,6 +136,7 @@ def main() -> None:
         if not ok and not args.continue_on_error:
             break
 
+    clean = True
     print("[preopen_run] Summary:")
     for name, ok, elapsed, err in results:
         status = "ok" if ok else "error"
@@ -142,7 +146,18 @@ def main() -> None:
 
     failures = [r for r in results if not r[1]]
     if failures:
+        clean = False
+        journal_run(
+            "preopen_run",
+            "error",
+            " ".join([f"{n}=error" for n, ok, *_ in results if not ok])[:200],
+        )
+        journal_watch("preopen_run had failures — see terminal output / cron run details")
         raise SystemExit(1)
+
+    # Successful run: persist a compact breadcrumb.
+    metrics = ", ".join([f"{n}={e:.1f}s" for n, ok, e, _ in results if ok])
+    journal_run("preopen_run", "ok", metrics)
 
 
 if __name__ == "__main__":
