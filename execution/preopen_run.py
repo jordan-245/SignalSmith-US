@@ -50,10 +50,37 @@ def run_step(name: str, cmd: List[str]) -> Tuple[bool, float, str]:
         return False, time.time() - started, f"{exc}"
 
 
+def market_is_open(date_str: str, calendar: str = "XNYS") -> bool:
+    """Return True if the market is scheduled to be open on the given date.
+
+    Uses exchange-calendars when available (covers weekends + US holidays).
+    Falls back to weekday-only if the dependency isn't installed.
+
+    calendar: default XNYS (NYSE). For NASDAQ use XNAS.
+    """
+
+    try:
+        import exchange_calendars as xcals  # type: ignore
+
+        cal = xcals.get_calendar(calendar)
+        # is_session accepts YYYY-MM-DD
+        return bool(cal.is_session(date_str))
+    except Exception:
+        # Conservative fallback: weekdays only.
+        d = dt.date.fromisoformat(date_str)
+        return d.weekday() < 5
+
+
 def main() -> None:
     args = parse_args()
     if os.getenv("SKIP_NEWS") == "1":
         args.skip_news = True
+
+    # Skip on non-trading days (weekends/holidays) so cron can run daily safely.
+    if not market_is_open(args.date):
+        print(f"[preopen_run] Market closed on {args.date}; skipping.")
+        return
+
     py = sys.executable
     base = Path(__file__).resolve().parents[1]
     steps: List[Tuple[str, List[str]]] = []
