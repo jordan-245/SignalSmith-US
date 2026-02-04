@@ -153,8 +153,8 @@ def main() -> None:
     now = dt.datetime.now(dt.timezone.utc)
     cutoff = now - dt.timedelta(minutes=args.timeout_minutes)
     expired = fetch_expired(cutoff, args.limit)
+    # Noise control: if nothing to do, exit cleanly and stay quiet (cron should not flap).
     if not expired:
-        print("[approval_timeout] No pending approvals expired.")
         return
     now_iso = now.isoformat()
     print(f"[approval_timeout] Expired approvals: {len(expired)}")
