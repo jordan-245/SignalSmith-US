@@ -170,20 +170,20 @@ def main() -> None:
 
     top_tickers = sorted(ticker_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:8]
 
-    noteworthy = bool(neg_hits) or (len(rows) >= args.min_docs)
+    # Concise mode: only notify when something looks materially actionable (red flags by default).
+    noteworthy = bool(neg_hits)
     if not (noteworthy or args.force):
         print("HEARTBEAT_OK")
         return
 
-    header = f"News watch — last {args.lookback_min}m"
+    header = f"News — last {args.lookback_min}m"
     lines = [header]
-    lines.append(f"- Docs scanned: {len(rows)}")
 
+    # Keep it short.
     if top_tickers:
-        lines.append("- Most mentioned: " + ", ".join([f"{t} ({c})" for t, c in top_tickers]))
+        lines.append("- Mentions: " + ", ".join([f"{t} ({c})" for t, c in top_tickers[:3]]))
 
     if neg_hits:
-        # de-dupe while keeping order
         seen = set()
         uniq = []
         for t, lbl in neg_hits:
@@ -192,33 +192,7 @@ def main() -> None:
                 continue
             seen.add(key)
             uniq.append((t, lbl))
-        lines.append("- Red flags: " + "; ".join([f"{t}: {lbl}" for t, lbl in uniq[:8]]))
-
-    if (not neg_hits) and pos_hits:
-        seen = set()
-        uniq2 = []
-        for t, lbl in pos_hits:
-            key = (t, lbl)
-            if key in seen:
-                continue
-            seen.add(key)
-            uniq2.append((t, lbl))
-        lines.append("- Positive notes: " + "; ".join([f"{t}: {lbl}" for t, lbl in uniq2[:6]]))
-
-    # Include a couple freshest links for quick click-through
-    uniq_links = []
-    seen_u = set()
-    for u in links:
-        if not u or u in seen_u:
-            continue
-        seen_u.add(u)
-        uniq_links.append(u)
-        if len(uniq_links) >= 3:
-            break
-    if uniq_links:
-        lines.append("- Latest links:")
-        for u in uniq_links:
-            lines.append(f"  - {u}")
+        lines.append("- Flags: " + "; ".join([f"{t}: {lbl}" for t, lbl in uniq[:5]]))
 
     send_telegram("\n".join(lines))
     print("HEARTBEAT_OK")

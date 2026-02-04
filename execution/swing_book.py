@@ -895,8 +895,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     targets_line = ", ".join(top_targets[:5])
     if len(top_targets) > 5:
         targets_line += ", " + ", ".join(top_targets[5:])
-    summary_lines.append(f"- Targets (top {len(top_targets)}):")
-    summary_lines.append(f"  - {targets_line}")
+    summary_lines.append(f"- Targets: {targets_line}")
 
     summary_lines.append(
         f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_PCT:.1%} · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
@@ -909,8 +908,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         st = stop_level(t, avg_cost)
         if st is not None:
             stops_preview.append(f"{t}@{st:.2f}")
-    if stops_preview:
-        summary_lines.append("- Stops (indicative): " + ", ".join(stops_preview))
+    # Stops are useful but noisy; show only when there were buys/sells.
+    if stops_preview and (len(buys) > 0 or len(exits) > 0):
+        summary_lines.append("- Stops: " + ", ".join(stops_preview))
     if avoided:
         summary_lines.append(
             f"- Earnings-avoided (next {EARNINGS_AVOID_DAYS} sessions): {', '.join(avoided[:10])}{'…' if len(avoided) > 10 else ''}"
