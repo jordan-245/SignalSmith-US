@@ -1,5 +1,29 @@
 # RSS/Atom sources (one per line)
 # Keep this allowlist small and high-signal.
-# Examples:
-# https://www.sec.gov/Archives/edgar/usgaap.rss.xml
-# https://www.prnewswire.com/rss/news-releases-list.rss
+# Note: RSS URLs occasionally change; if a feed stops working, we’ll replace it.
+
+# --- Broad market / business headlines (often include equities + commodities)
+https://feeds.a.dj.com/rss/RSSMarketsMain.xml            # WSJ Markets
+https://feeds.a.dj.com/rss/RSSWSJD.xml                   # WSJ World News
+https://www.ft.com/?format=rss                           # Financial Times (may be limited)
+https://www.economist.com/rss/the-world-this-week        # The Economist (often partial)
+
+# --- Finance-focused (free RSS endpoints)
+https://www.marketwatch.com/rss/topstories               # MarketWatch Top Stories
+https://www.investing.com/rss/news_25.rss                # Investing.com - commodities news
+https://www.investing.com/rss/news_95.rss                # Investing.com - stock market news
+https://www.investing.com/rss/news_301.rss               # Investing.com - economic indicators
+https://www.fxstreet.com/rss/news                        # FXStreet - markets
+https://www.fxstreet.com/rss/commodities                 # FXStreet - commodities
+
+# --- Commodities specialists
+https://oilprice.com/rss/main                            # OilPrice.com
+https://www.kitco.com/rss/news                           # Kitco - metals
+
+# --- Company/filings / press releases (high signal for single-name events)
+https://www.sec.gov/Archives/edgar/usgaap.rss.xml         # SEC EDGAR (US GAAP taxonomy feed)
+https://www.prnewswire.com/rss/news-releases-list.rss     # PR Newswire
+https://www.globenewswire.com/RssFeed/industry/All?format=xml  # GlobeNewswire
+
+# --- Macro / energy agencies
+https://www.eia.gov/rss/todayinenergy.xml                # US EIA Today in Energy
