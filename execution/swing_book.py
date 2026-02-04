@@ -39,6 +39,9 @@ DEFAULT_CASH = 5_000.0
 MAX_POSITIONS = 10
 MIN_HOLD_DAYS = 5  # business days
 
+# Avoid opening new positions into earnings events.
+EARNINGS_AVOID_DAYS = 3  # trading sessions ahead (inclusive)
+
 FEES_BPS = 2
 SLIPPAGE_BPS = 5
 
@@ -210,6 +213,15 @@ def rank_candidates(ind: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _get_xnys_calendar():
+    try:
+        import exchange_calendars as xcals  # type: ignore
+
+        return xcals.get_calendar("XNYS")
+    except Exception:
+        return None
+
+
 def market_is_open(date_str: str, calendar: str = "XNYS") -> bool:
     """True if the exchange calendar has a session on date_str."""
     try:
@@ -220,6 +232,73 @@ def market_is_open(date_str: str, calendar: str = "XNYS") -> bool:
     except Exception:
         d = dt.date.fromisoformat(date_str)
         return d.weekday() < 5
+
+
+def next_trading_sessions(date_str: str, sessions_ahead: int) -> List[str]:
+    """Return a list of session dates (YYYY-MM-DD) starting at date_str (inclusive)."""
+    cal = _get_xnys_calendar()
+    if cal is None:
+        # Weekday fallback (no holiday awareness)
+        d0 = dt.date.fromisoformat(date_str)
+        out: List[str] = []
+        d = d0
+        while len(out) < max(1, sessions_ahead + 1):
+            if d.weekday() < 5:
+                out.append(d.isoformat())
+            d += dt.timedelta(days=1)
+        return out
+
+    start = pd.Timestamp(date_str)
+    # Pull enough calendar days to cover N sessions
+    end = start + pd.Timedelta(days=20)
+    sessions = cal.sessions_in_range(start, end)
+    out = [s.date().isoformat() for s in sessions[: max(1, sessions_ahead + 1)]]
+    return out
+
+
+def next_earnings_date(ticker: str) -> Optional[dt.date]:
+    """Best-effort next earnings date from yfinance.
+
+    Suppresses yfinance stdout/stderr to avoid log spam.
+    """
+
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            cal = yf.Ticker(ticker).calendar
+        if cal is None or getattr(cal, "empty", False):
+            return None
+        if "Earnings Date" in cal.index:
+            val = cal.loc["Earnings Date"].iloc[0]
+        else:
+            val = cal.iloc[0, 0]
+        ts = pd.to_datetime(val)
+        if pd.isna(ts):
+            return None
+        return ts.date()
+    except Exception:
+        return None
+
+
+def filter_earnings_avoid(candidates: List[str], trade_date: dt.date, sessions_ahead: int) -> Tuple[List[str], List[str]]:
+    """Remove tickers with earnings within next sessions_ahead sessions (inclusive)."""
+    if not candidates or sessions_ahead <= 0:
+        return candidates, []
+
+    window = set(next_trading_sessions(trade_date.isoformat(), sessions_ahead))
+    kept: List[str] = []
+    avoided: List[str] = []
+    cache: Dict[str, Optional[dt.date]] = {}
+
+    for t in candidates:
+        if t not in cache:
+            cache[t] = next_earnings_date(t)
+        ed = cache[t]
+        if ed is not None and ed.isoformat() in window:
+            avoided.append(t)
+        else:
+            kept.append(t)
+
+    return kept, avoided
 
 
 def first_hour_vwap_yf_1h(ticker: str, date_str: str, tz: str = "America/New_York") -> Optional[float]:
@@ -379,7 +458,10 @@ def run(trade_date: dt.date) -> None:
         send_telegram(f"[swing] {trade_date.isoformat()} no candidates. {note}")
         return
 
-    targets = ranked.head(MAX_POSITIONS)["ticker"].tolist()
+    # Earnings avoid rule: do not open new positions into earnings within the next N sessions.
+    pre_targets = ranked.head(80)["ticker"].tolist()  # limit API calls
+    filtered, avoided = filter_earnings_avoid(pre_targets, trade_date, EARNINGS_AVOID_DAYS)
+    targets = filtered[:MAX_POSITIONS]
 
     # Portfolio state
     _, positions = fetch_latest_positions(DEFAULT_PORTFOLIO_ID, trade_date.isoformat())
@@ -504,8 +586,12 @@ def run(trade_date: dt.date) -> None:
         f"[swing] {trade_date.isoformat()} executed.",
         note,
         f"Targets: {', '.join(targets[:10])}",
-        f"Trades: sells={len(exits)} buys={len(buys)} positions={len(positions_out)} equity=${equity:,.2f} cash=${cash:,.2f}",
     ]
+    if avoided:
+        summary_lines.append(f"Earnings-avoided (next {EARNINGS_AVOID_DAYS} sessions): {', '.join(avoided[:10])}{'…' if len(avoided) > 10 else ''}")
+    summary_lines.append(
+        f"Trades: sells={len(exits)} buys={len(buys)} positions={len(positions_out)} equity=${equity:,.2f} cash=${cash:,.2f}"
+    )
     send_telegram("\n".join(summary_lines))
 
 
