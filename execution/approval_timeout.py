@@ -53,6 +53,12 @@ def supabase_headers() -> Dict[str, str]:
 
 
 def fetch_expired(cutoff: dt.datetime, limit: int) -> List[dict]:
+    """Return expired approval rows.
+
+    If the approvals tables haven't been deployed to Supabase yet (common in early
+    environments), PostgREST returns PGRST205 (404). In that case we log and
+    exit cleanly so cron doesn't flap.
+    """
     url = f"{supabase_base()}/rest/v1/approval_requests"
     params = {
         "select": "request_id,request_type,created_ts",
@@ -62,6 +68,14 @@ def fetch_expired(cutoff: dt.datetime, limit: int) -> List[dict]:
         "limit": str(limit),
     }
     resp = requests.get(url, headers=supabase_headers(), params=params, timeout=15)
+
+    if resp.status_code == 404 and "PGRST205" in resp.text:
+        print(
+            "[approval_timeout] approvals tables not found in Supabase (PGRST205). "
+            "Skipping sweep. (Did you deploy schema/approvals.sql?)"
+        )
+        return []
+
     if resp.status_code >= 300:
         raise RuntimeError(f"Supabase fetch failed: {resp.status_code} {resp.text}")
     return resp.json()

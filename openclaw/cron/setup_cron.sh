@@ -16,7 +16,7 @@ openclaw cron add \
   --cron "45 8 * * 1-5" \
   --tz "America/New_York" \
   --session isolated \
-  --message "Run pre-open pipeline: python execution/preopen_run.py. Skip if market closed." \
+  --message "Run pre-open pipeline: ./.venv/bin/python execution/preopen_run.py. Skip if market closed." \
   "${DELIVER_ARGS[@]}"
 
 # Post-close report (ET).
@@ -25,7 +25,7 @@ openclaw cron add \
   --cron "30 16 * * 1-5" \
   --tz "America/New_York" \
   --session isolated \
-  --message "Run EOD report: python execution/eod_report.py --notify-telegram." \
+  --message "Run EOD report: ./.venv/bin/python execution/eod_report.py --notify-telegram." \
   "${DELIVER_ARGS[@]}"
 
 # Approval timeout sweep (UTC).
@@ -34,7 +34,7 @@ openclaw cron add \
   --cron "*/5 * * * *" \
   --tz "UTC" \
   --session isolated \
-  --message "Run approval timeout sweep: execution/approval_timeout.py --timeout-minutes 15 --notify-telegram"
+  --message "Run approval timeout sweep: ./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram"
 
 # Optional after-hours digest (ET). Enable with ENABLE_AFTER_HOURS=1.
 if [[ "${ENABLE_AFTER_HOURS:-0}" == "1" ]]; then
