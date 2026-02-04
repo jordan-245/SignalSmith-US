@@ -21,6 +21,7 @@ import argparse
 import datetime as dt
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import List
@@ -104,8 +105,9 @@ def main() -> None:
 
     # Hand off to ingest_docs for actual fetching/cleaning/storage.
     repo = Path(__file__).resolve().parents[1]
+    python_bin = os.getenv("PYTHON") or sys.executable
     cmd = [
-        os.getenv("PYTHON", "python"),
+        python_bin,
         str(repo / "execution" / "ingest_docs.py"),
         "--urls-file",
         tmp_path,
