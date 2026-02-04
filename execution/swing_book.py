@@ -539,14 +539,19 @@ def research_likely_good(ticker: str, trade_date: dt.date) -> Tuple[bool, str]:
 
 
 def market_note(ind: pd.DataFrame) -> str:
-    """Very lightweight regime note from SPY / proxies."""
-    spy = ind[ind["ticker"] == "SPY"]
-    if spy.empty:
-        return "Regime: unknown (missing SPY)."
-    r20 = float(spy.iloc[0]["ret20"])
-    vol = float(spy.iloc[0]["vol20"] or 0.0)
-    trend = "up" if (spy.iloc[0]["close"] > spy.iloc[0]["sma50"] > spy.iloc[0]["sma200"]) else "not-up"
-    return f"Regime: SPY 20d={r20:+.1%}, vol20={vol:.2%}, trend={trend}."
+    """Very lightweight regime note from a broad US index proxy.
+
+    Prefers SPY, but falls back to VOO/IVV if SPY is missing.
+    """
+    for sym in ("SPY", "VOO", "IVV"):
+        df = ind[ind["ticker"] == sym]
+        if df.empty:
+            continue
+        r20 = float(df.iloc[0]["ret20"])
+        vol = float(df.iloc[0]["vol20"] or 0.0)
+        trend = "up" if (df.iloc[0]["close"] > df.iloc[0]["sma50"] > df.iloc[0]["sma200"]) else "not-up"
+        return f"Regime: {sym} 20d={r20:+.1%}, vol20={vol:.2%}, trend={trend}."
+    return "Regime: unknown (missing index proxy)."
 
 
 def run(trade_date: dt.date, mode: str = "pre") -> None:
@@ -880,12 +885,18 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     upsert("paper_positions", positions_out, ["date", "portfolio_id", "ticker"])
     upsert("paper_equity_curve", [equity_row], ["date", "portfolio_id"])
 
+    # Friendlier Telegram summary (first line becomes bold via telegram_fmt)
     summary_lines = [
-        f"[swing] {trade_date.isoformat()} executed.",
-        note,
-        f"Targets: {', '.join(targets[:10])}",
-        f"Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x, risk/trade={RISK_PER_TRADE_PCT:.1%}, max/name={MAX_EQUITY_PER_NAME:.0%}, time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR",
+        f"Swing — {trade_date.isoformat()}",
     ]
+    if note and "unknown" not in note.lower():
+        summary_lines.append(f"- {note}")
+    summary_lines.extend(
+        [
+            f"- Targets: {', '.join(targets[:10])}",
+            f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_PCT:.1%} · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR",
+        ]
+    )
 
     # Show indicative stop levels for first few positions (computed from avg_cost and current ATR).
     stops_preview = []
@@ -895,21 +906,25 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         if st is not None:
             stops_preview.append(f"{t}@{st:.2f}")
     if stops_preview:
-        summary_lines.append("Stops (indicative): " + ", ".join(stops_preview))
+        summary_lines.append("- Stops (indicative): " + ", ".join(stops_preview))
     if avoided:
-        summary_lines.append(f"Earnings-avoided (next {EARNINGS_AVOID_DAYS} sessions): {', '.join(avoided[:10])}{'…' if len(avoided) > 10 else ''}")
+        summary_lines.append(
+            f"- Earnings-avoided (next {EARNINGS_AVOID_DAYS} sessions): {', '.join(avoided[:10])}{'…' if len(avoided) > 10 else ''}"
+        )
     cat_filled = len([o for o in orders if str(o.get("order_id", "")).find("-CATALYST-BUY-") != -1])
     if cat_filled:
         # show up to 5 catalyst reasons
         shown = []
         for t in list(catalyst_reasons.keys())[:5]:
             shown.append(f"{t} ({catalyst_reasons[t]})")
-        summary_lines.append(f"Catalyst buys: {cat_filled} (cap {CATALYST_MAX_EQUITY_TOTAL:.0%} total, {CATALYST_MAX_EQUITY_PER_NAME:.0%}/name)")
+        summary_lines.append(
+            f"- Catalyst buys: {cat_filled} (cap {CATALYST_MAX_EQUITY_TOTAL:.0%} total, {CATALYST_MAX_EQUITY_PER_NAME:.0%}/name)"
+        )
         if shown:
-            summary_lines.append("Catalyst notes: " + "; ".join(shown))
+            summary_lines.append("- Catalyst notes: " + "; ".join(shown))
 
     summary_lines.append(
-        f"Trades: sells={len(exits)} buys={len(buys)} positions={len(positions_out)} equity=${equity:,.2f} cash=${cash:,.2f}"
+        f"- Trades: sells={len(exits)} · buys={len(buys)} · positions={len(positions_out)} · equity=${equity:,.2f} · cash=${cash:,.2f}"
     )
     send_telegram("\n".join(summary_lines))
 
