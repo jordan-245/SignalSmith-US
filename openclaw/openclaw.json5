@@ -1,0 +1,38 @@
+{
+  // OpenClaw gateway config template for SignalSmith.
+  // Copy into your OpenClaw config location on the VPS.
+  agents: {
+    defaults: {
+      userTimezone: "Australia/Brisbane",
+      // Update to the repo path on the VPS.
+      workspace: "/srv/signalsmith/SignalSmith-US",
+      heartbeat: {
+        every: "30m",
+        // Send heartbeat summaries to the last active channel (Telegram).
+        target: "last",
+        showOk: false,
+        includeReasoning: false,
+        ackMaxChars: 240
+      }
+    },
+    list: [
+      {
+        id: "signalsmith",
+        workspace: "/srv/signalsmith/SignalSmith-US"
+      }
+    ]
+  },
+  channels: {
+    telegram: {
+      enabled: true,
+      // Set token here or use TELEGRAM_BOT_TOKEN env var.
+      // botToken: "123:abc",
+      // Enable Telegram inline approval buttons.
+      capabilities: {
+        inlineButtons: "allowlist"
+      }
+      // Optionally restrict who can trigger commands.
+      // allowFrom: ["123456789"]
+    }
+  }
+}
