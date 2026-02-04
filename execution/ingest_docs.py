@@ -162,7 +162,8 @@ def clean_html(content: bytes) -> str:
     try:
         from readability import Document  # type: ignore
 
-        doc = Document(content)
+        # readability expects text input
+        doc = Document(content.decode("utf-8", errors="ignore"))
         html = doc.summary(html_partial=True)
         soup = BeautifulSoup(html, "html.parser")
     except Exception:
