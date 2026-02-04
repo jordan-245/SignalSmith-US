@@ -1,0 +1,5 @@
+# RSS/Atom sources (one per line)
+# Keep this allowlist small and high-signal.
+# Examples:
+# https://www.sec.gov/Archives/edgar/usgaap.rss.xml
+# https://www.prnewswire.com/rss/news-releases-list.rss

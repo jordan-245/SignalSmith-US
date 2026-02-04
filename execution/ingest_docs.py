@@ -152,11 +152,26 @@ def detect_published_at(headers: Dict[str, str], observed_at: dt.datetime, conte
 
 
 def clean_html(content: bytes) -> str:
-    soup = BeautifulSoup(content, "html.parser")
+    """Extract readable text from HTML.
+
+    Prefers readability-lxml (main-article extraction). Falls back to a simple
+    BeautifulSoup text dump.
+    """
+
+    # 1) Try readability for higher-signal extraction.
+    try:
+        from readability import Document  # type: ignore
+
+        doc = Document(content)
+        html = doc.summary(html_partial=True)
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        # 2) Fallback: full-page text.
+        soup = BeautifulSoup(content, "html.parser")
+
     for script in soup(["script", "style", "noscript"]):
         script.decompose()
     text = soup.get_text(separator="\n")
-    # normalize whitespace
     lines = [line.strip() for line in text.splitlines()]
     return "\n".join([l for l in lines if l])
 

@@ -7,3 +7,7 @@ python-dotenv
 beautifulsoup4
 tabulate
 exchange-calendars
+
+feedparser
+readability-lxml
+lxml
