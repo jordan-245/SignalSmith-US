@@ -39,6 +39,14 @@ DEFAULT_CASH = 5_000.0
 MAX_POSITIONS = 10
 MIN_HOLD_DAYS = 5  # business days
 
+# Avoid opening new positions into earnings events.
+EARNINGS_AVOID_DAYS = 3  # trading sessions ahead (inclusive)
+
+# Post-earnings catalyst allocation (paper-only)
+CATALYST_MAX_EQUITY_PER_NAME = 0.02
+CATALYST_MAX_EQUITY_TOTAL = 0.10
+CATALYST_NEWS_LOOKBACK_DAYS = 3
+
 FEES_BPS = 2
 SLIPPAGE_BPS = 5
 
@@ -210,6 +218,15 @@ def rank_candidates(ind: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _get_xnys_calendar():
+    try:
+        import exchange_calendars as xcals  # type: ignore
+
+        return xcals.get_calendar("XNYS")
+    except Exception:
+        return None
+
+
 def market_is_open(date_str: str, calendar: str = "XNYS") -> bool:
     """True if the exchange calendar has a session on date_str."""
     try:
@@ -220,6 +237,73 @@ def market_is_open(date_str: str, calendar: str = "XNYS") -> bool:
     except Exception:
         d = dt.date.fromisoformat(date_str)
         return d.weekday() < 5
+
+
+def next_trading_sessions(date_str: str, sessions_ahead: int) -> List[str]:
+    """Return a list of session dates (YYYY-MM-DD) starting at date_str (inclusive)."""
+    cal = _get_xnys_calendar()
+    if cal is None:
+        # Weekday fallback (no holiday awareness)
+        d0 = dt.date.fromisoformat(date_str)
+        out: List[str] = []
+        d = d0
+        while len(out) < max(1, sessions_ahead + 1):
+            if d.weekday() < 5:
+                out.append(d.isoformat())
+            d += dt.timedelta(days=1)
+        return out
+
+    start = pd.Timestamp(date_str)
+    # Pull enough calendar days to cover N sessions
+    end = start + pd.Timedelta(days=20)
+    sessions = cal.sessions_in_range(start, end)
+    out = [s.date().isoformat() for s in sessions[: max(1, sessions_ahead + 1)]]
+    return out
+
+
+def next_earnings_date(ticker: str) -> Optional[dt.date]:
+    """Best-effort next earnings date from yfinance.
+
+    Suppresses yfinance stdout/stderr to avoid log spam.
+    """
+
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            cal = yf.Ticker(ticker).calendar
+        if cal is None or getattr(cal, "empty", False):
+            return None
+        if "Earnings Date" in cal.index:
+            val = cal.loc["Earnings Date"].iloc[0]
+        else:
+            val = cal.iloc[0, 0]
+        ts = pd.to_datetime(val)
+        if pd.isna(ts):
+            return None
+        return ts.date()
+    except Exception:
+        return None
+
+
+def filter_earnings_avoid(candidates: List[str], trade_date: dt.date, sessions_ahead: int) -> Tuple[List[str], List[str]]:
+    """Remove tickers with earnings within next sessions_ahead sessions (inclusive)."""
+    if not candidates or sessions_ahead <= 0:
+        return candidates, []
+
+    window = set(next_trading_sessions(trade_date.isoformat(), sessions_ahead))
+    kept: List[str] = []
+    avoided: List[str] = []
+    cache: Dict[str, Optional[dt.date]] = {}
+
+    for t in candidates:
+        if t not in cache:
+            cache[t] = next_earnings_date(t)
+        ed = cache[t]
+        if ed is not None and ed.isoformat() in window:
+            avoided.append(t)
+        else:
+            kept.append(t)
+
+    return kept, avoided
 
 
 def first_hour_vwap_yf_1h(ticker: str, date_str: str, tz: str = "America/New_York") -> Optional[float]:
@@ -349,6 +433,66 @@ def upsert(table: str, rows: List[Dict], conflict_cols: List[str]) -> None:
         raise RuntimeError(f"{table} upsert failed: {resp.status_code} {resp.text}")
 
 
+def fetch_recent_docs_for_ticker(ticker: str, since_date: dt.date, limit: int = 5) -> List[Dict]:
+    """Fetch recent cleaned docs that mention ticker (best-effort, simple text match)."""
+    base = supabase_base()
+    url = f"{base}/rest/v1/docs_text"
+
+    # Join docs_raw for metadata.
+    select = "doc_id,cleaned_text,docs_raw!inner(url,source,published_at)"
+    like1 = f"%${ticker}%"
+    like2 = f"% {ticker} %"
+    like3 = f"%({ticker})%"
+
+    params = [
+        ("select", select),
+        ("docs_raw.published_at", f"gte.{since_date.isoformat()}"),
+        ("order", "docs_raw.published_at.desc"),
+        ("limit", str(limit)),
+        # OR filter for mentions
+        ("or", f"(cleaned_text.ilike.{like1},cleaned_text.ilike.{like2},cleaned_text.ilike.{like3})"),
+    ]
+
+    resp = requests.get(url, headers=supabase_headers(), params=params, timeout=20)
+    if resp.status_code >= 300:
+        return []
+    return resp.json() or []
+
+
+def research_likely_good(ticker: str, trade_date: dt.date) -> Tuple[bool, str]:
+    """Deterministic heuristic to decide if post-event news flow looks positive.
+
+    We intentionally avoid "predicting earnings". This is a post-event filter using
+    our ingested news text from docs_text.
+    """
+
+    since = trade_date - dt.timedelta(days=CATALYST_NEWS_LOOKBACK_DAYS)
+    docs = fetch_recent_docs_for_ticker(ticker, since, limit=6)
+    if not docs:
+        return False, "no recent docs"
+
+    text = "\n".join((d.get("cleaned_text") or "")[:4000] for d in docs).lower()
+
+    pos_words = [
+        "beats", "beat estimates", "tops estimates", "raises guidance", "raise guidance", "guidance raised",
+        "strong demand", "record", "outperform", "upgrade", "price target raised",
+    ]
+    neg_words = [
+        "misses", "missed estimates", "cuts guidance", "cut guidance", "guidance cut",
+        "weak demand", "downgrade", "price target cut", "restatement", "sec investigation",
+        "secondary offering", "dilution",
+    ]
+
+    pos = sum(text.count(w) for w in pos_words)
+    neg = sum(text.count(w) for w in neg_words)
+
+    if neg > 0:
+        return False, f"negative flags (neg={neg})"
+    if pos >= 2:
+        return True, f"positive news keywords (pos={pos})"
+    return False, f"insufficient positive signal (pos={pos}, neg={neg})"
+
+
 def market_note(ind: pd.DataFrame) -> str:
     """Very lightweight regime note from SPY / proxies."""
     spy = ind[ind["ticker"] == "SPY"]
@@ -360,7 +504,7 @@ def market_note(ind: pd.DataFrame) -> str:
     return f"Regime: SPY 20d={r20:+.1%}, vol20={vol:.2%}, trend={trend}."
 
 
-def run(trade_date: dt.date) -> None:
+def run(trade_date: dt.date, mode: str = "pre") -> None:
     # Skip weekends/holidays so the cron schedule is safe.
     if not market_is_open(trade_date.isoformat()):
         send_telegram(f"[swing] {trade_date.isoformat()} market closed; skipping.")
@@ -379,7 +523,10 @@ def run(trade_date: dt.date) -> None:
         send_telegram(f"[swing] {trade_date.isoformat()} no candidates. {note}")
         return
 
-    targets = ranked.head(MAX_POSITIONS)["ticker"].tolist()
+    # Earnings avoid rule: do not open new positions into earnings within the next N sessions.
+    pre_targets = ranked.head(80)["ticker"].tolist()  # limit API calls
+    filtered, avoided = filter_earnings_avoid(pre_targets, trade_date, EARNINGS_AVOID_DAYS)
+    targets = filtered[:MAX_POSITIONS]
 
     # Portfolio state
     _, positions = fetch_latest_positions(DEFAULT_PORTFOLIO_ID, trade_date.isoformat())
@@ -441,8 +588,85 @@ def run(trade_date: dt.date) -> None:
         fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
         held.pop(t, None)
 
-    # Buys
+    # Buys (two-stage):
+    # 1) Post-close catalyst adds (only in mode=post)
+    # 2) Regular target buys (equal-ish allocation)
+
+    def estimate_equity_now() -> float:
+        total = cash
+        for t, p in held.items():
+            qty = float(p.get("qty") or 0.0)
+            if qty <= 0:
+                continue
+            px_close = daily_proxy(t) or float(p.get("avg_cost") or 0.0)
+            total += px_close * qty
+        return float(total)
+
+    catalyst_buys: List[str] = []
+    catalyst_reasons: Dict[str, str] = {}
+
+    if mode == "post":
+        # Candidates for catalyst research: from our ranked list (already trend-filtered)
+        # limited to reduce Yahoo calls.
+        post_cands = ranked.head(40)["ticker"].tolist()
+        for t in post_cands:
+            if t in held:
+                continue
+            ed = next_earnings_date(t)
+            if ed is None:
+                continue
+            if ed.isoformat() != trade_date.isoformat():
+                continue
+            ok, why = research_likely_good(t, trade_date)
+            if ok:
+                catalyst_buys.append(t)
+                catalyst_reasons[t] = why
+
+    # Execute catalyst buys with strict caps
+    equity_now = estimate_equity_now()
+    catalyst_budget_total = CATALYST_MAX_EQUITY_TOTAL * equity_now
+    catalyst_budget_name = CATALYST_MAX_EQUITY_PER_NAME * equity_now
+
     slots = MAX_POSITIONS - len(held)
+    catalyst_buys = catalyst_buys[: max(0, slots)]
+
+    catalyst_allocated = 0.0
+    for t in catalyst_buys:
+        if slots <= 0:
+            break
+        if catalyst_allocated >= catalyst_budget_total:
+            break
+        dollars = min(catalyst_budget_name, catalyst_budget_total - catalyst_allocated, cash)
+        if dollars <= 25:  # ignore tiny allocations
+            continue
+
+        vwap = first_hour_vwap_yf_1h(t, trade_date.isoformat()) or daily_proxy(t)
+        if vwap is None:
+            continue
+        fill_price = vwap * (1 + SLIPPAGE_BPS / 10_000.0)
+        cost_per_share = fill_price * (1 + FEES_BPS / 10_000.0)
+        shares = math.floor(dollars / cost_per_share) if cost_per_share > 0 else 0
+        if shares <= 0:
+            continue
+
+        total_notional = fill_price * shares
+        fees = total_notional * (FEES_BPS / 10_000.0)
+        total_cost = total_notional + fees
+        if total_cost > cash:
+            continue
+
+        cash -= total_cost
+        catalyst_allocated += total_cost
+        slots -= 1
+
+        order_id = f"{run_id}-CATALYST-BUY-{t}"
+        orders.append({"order_id": order_id, "date": trade_date.isoformat(), "ticker": t, "side": "buy", "target_weight": 0.0, "qty_estimate": shares, "status": "filled"})
+        fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
+
+        eligible_sell_date = (pd.Timestamp(trade_date) + pd.tseries.offsets.BDay(MIN_HOLD_DAYS)).date()
+        held[t] = {"ticker": t, "qty": shares, "avg_cost": fill_price, "entry_date": trade_date.isoformat(), "eligible_sell_date": eligible_sell_date.isoformat()}
+
+    # Regular buys (from targets not held)
     buys = entries[: max(0, slots)]
     if buys:
         alloc = cash / len(buys)
@@ -504,15 +728,37 @@ def run(trade_date: dt.date) -> None:
         f"[swing] {trade_date.isoformat()} executed.",
         note,
         f"Targets: {', '.join(targets[:10])}",
-        f"Trades: sells={len(exits)} buys={len(buys)} positions={len(positions_out)} equity=${equity:,.2f} cash=${cash:,.2f}",
     ]
+    if avoided:
+        summary_lines.append(f"Earnings-avoided (next {EARNINGS_AVOID_DAYS} sessions): {', '.join(avoided[:10])}{'…' if len(avoided) > 10 else ''}")
+    cat_filled = len([o for o in orders if str(o.get("order_id", "")).find("-CATALYST-BUY-") != -1])
+    if cat_filled:
+        # show up to 5 catalyst reasons
+        shown = []
+        for t in list(catalyst_reasons.keys())[:5]:
+            shown.append(f"{t} ({catalyst_reasons[t]})")
+        summary_lines.append(f"Catalyst buys: {cat_filled} (cap {CATALYST_MAX_EQUITY_TOTAL:.0%} total, {CATALYST_MAX_EQUITY_PER_NAME:.0%}/name)")
+        if shown:
+            summary_lines.append("Catalyst notes: " + "; ".join(shown))
+
+    summary_lines.append(
+        f"Trades: sells={len(exits)} buys={len(buys)} positions={len(positions_out)} equity=${equity:,.2f} cash=${cash:,.2f}"
+    )
     send_telegram("\n".join(summary_lines))
 
 
 def main() -> None:
+    import argparse
+
     load_env()
-    trade_date = dt.date.today()
-    run(trade_date)
+
+    p = argparse.ArgumentParser(description="Swing book paper trading")
+    p.add_argument("--day", default=dt.date.today().isoformat(), help="YYYY-MM-DD")
+    p.add_argument("--mode", choices=["pre", "post"], default="pre", help="Run mode: pre-open scan or post-close scan")
+    args = p.parse_args()
+
+    trade_date = dt.date.fromisoformat(args.day)
+    run(trade_date, mode=args.mode)
 
 
 if __name__ == "__main__":
