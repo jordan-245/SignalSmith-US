@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
+import yfinance as yf
 from dotenv import load_dotenv
 
 DEFAULT_CASH = 5_000.0
@@ -29,7 +30,7 @@ DEFAULT_SLIPPAGE_BPS = 5
 DEFAULT_MIN_HOLD_DAYS = 5
 DEFAULT_PORTFOLIO_ID = "default"
 DEFAULT_PORTFOLIO_NAME = "Default"
-VWAP_METHOD = "ohlc_avg"
+VWAP_METHOD = "first_hour_vwap_1h_yfinance"
 
 
 def load_env() -> None:
@@ -147,7 +148,93 @@ def fetch_prices(date_str: str, tickers: List[str]) -> Dict[str, Dict[str, float
     return price_map
 
 
+def first_hour_vwap_yf_1h(ticker: str, date_str: str, tz: str = "America/New_York") -> Optional[float]:
+    """Compute first-hour VWAP from yfinance 1h bars.
+
+    - Fetches 1h bars for [date, date+1)
+    - Picks the 09:30–10:30 ET bar when present (typical for US equities)
+    - VWAP = sum(typical_price * volume) / sum(volume)
+
+    Returns None if bars/volume are missing.
+
+    Note: yfinance intraday history is limited; this is intended for live-ish
+    paper trading and recent backtests. Callers should fall back to daily proxy.
+    """
+
+    d0 = dt.date.fromisoformat(date_str)
+    d1 = d0 + dt.timedelta(days=1)
+
+    try:
+        df = yf.download(
+            tickers=ticker,
+            start=d0.isoformat(),
+            end=d1.isoformat(),
+            interval="1h",
+            progress=False,
+            auto_adjust=False,
+            prepost=False,
+        )
+    except Exception:
+        return None
+
+    if df is None or df.empty:
+        return None
+
+    # Ensure TZ-aware timestamps in the target market timezone.
+    idx = df.index
+    try:
+        if getattr(idx, "tz", None) is None:
+            # yfinance often returns UTC-naive; treat as UTC
+            idx = idx.tz_localize("UTC")
+        idx_local = idx.tz_convert(tz)
+    except Exception:
+        return None
+
+    df = df.copy()
+    df.index = idx_local
+
+    # Filter bars for the target date in local time.
+    day = df[df.index.date == d0]
+    if day.empty:
+        return None
+
+    # Prefer the standard US open bar timestamp.
+    open_bar = day[(day.index.hour == 9) & (day.index.minute == 30)]
+    if open_bar.empty:
+        # Fallback: first available bar of the day.
+        open_bar = day.iloc[:1]
+
+    # Handle both single-index columns and multiindex.
+    def col(name: str) -> Optional[pd.Series]:
+        if name in open_bar.columns:
+            return open_bar[name]
+        # Sometimes yfinance uses lowercase
+        name2 = name.lower()
+        if name2 in open_bar.columns:
+            return open_bar[name2]
+        return None
+
+    high = col("High")
+    low = col("Low")
+    close = col("Close")
+    vol = col("Volume")
+
+    if high is None or low is None or close is None or vol is None:
+        return None
+
+    try:
+        tp = (high.astype(float) + low.astype(float) + close.astype(float)) / 3.0
+        v = vol.astype(float)
+        v_sum = float(v.sum())
+        if v_sum <= 0:
+            return None
+        return float((tp * v).sum() / v_sum)
+    except Exception:
+        return None
+
+
 def vwap_proxy(price_row: Dict[str, float | None]) -> Optional[float]:
+    # Daily fallback proxy: average of available OHLC fields.
     vals = [price_row.get("open"), price_row.get("high"), price_row.get("low"), price_row.get("close")]
     clean = [v for v in vals if v is not None]
     if clean:
@@ -425,7 +512,10 @@ def main() -> None:
                 warnings.append(f"Missing price for sell: {ticker}")
                 kept_positions[ticker] = pos
                 continue
-            vwap = vwap_proxy(price_row)
+            vwap = first_hour_vwap_yf_1h(ticker, args.date)
+            if vwap is None:
+                vwap = vwap_proxy(price_row)
+                warnings.append(f"No intraday VWAP for sell {ticker}; fell back to daily proxy.")
             if vwap is None:
                 warnings.append(f"No VWAP proxy for sell: {ticker}")
                 kept_positions[ticker] = pos
@@ -471,7 +561,10 @@ def main() -> None:
             if not price_row:
                 warnings.append(f"Missing price for buy: {ticker}")
                 continue
-            vwap = vwap_proxy(price_row)
+            vwap = first_hour_vwap_yf_1h(ticker, args.date)
+            if vwap is None:
+                vwap = vwap_proxy(price_row)
+                warnings.append(f"No intraday VWAP for buy {ticker}; fell back to daily proxy.")
             if vwap is None:
                 warnings.append(f"No VWAP proxy for buy: {ticker}")
                 continue
