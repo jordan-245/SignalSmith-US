@@ -122,13 +122,11 @@ def insert_actions(requests_expired: List[dict], now_iso: str, timeout_minutes: 
 
 
 def send_telegram_summary(expired: List[dict], timeout_minutes: int) -> None:
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not bot_token or not chat_id or not expired:
+    if not expired:
         return
     max_items = 10
     lines = [
-        f"[approval_timeout] Auto-denied {len(expired)} request(s) after {timeout_minutes} minutes."
+        f"Approval timeout sweep: auto-denied {len(expired)} request(s) (>{timeout_minutes} min)"
     ]
     for row in expired[:max_items]:
         rid = row.get("request_id", "unknown")
@@ -137,14 +135,10 @@ def send_telegram_summary(expired: List[dict], timeout_minutes: int) -> None:
         lines.append(f"- {rid} | {rtype} | created {created}")
     if len(expired) > max_items:
         lines.append(f"- ...and {len(expired) - max_items} more")
-    text = "\n".join(lines)
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    try:
-        resp = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
-        if resp.status_code >= 300:
-            print(f"[telegram] send failed: {resp.status_code} {resp.text}")
-    except Exception as exc:
-        print(f"[telegram] send error: {exc}")
+
+    from telegram_fmt import send_telegram as _send
+
+    _send("\n".join(lines), timeout=10)
 
 
 def main() -> None:

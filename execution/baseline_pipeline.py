@@ -285,17 +285,10 @@ def write_run_log(artifacts: PipelineArtifacts, out_dir: Path) -> Path:
 
 
 def send_telegram_message(text: str) -> None:
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not bot_token or not chat_id:
-        return
-    try:
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        resp = requests.post(url, json={"chat_id": chat_id, "text": text})
-        if resp.status_code >= 400:
-            print(f"[telegram] send failed: {resp.status_code} {resp.text}")
-    except Exception as exc:  # pragma: no cover
-        print(f"[telegram] send error: {exc}")
+    # Nicely formatted Telegram HTML message
+    from telegram_fmt import send_telegram as _send
+
+    _send(text)
 
 
 def push_supabase(payload: dict) -> None:

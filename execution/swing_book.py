@@ -56,6 +56,10 @@ ATR_STOP_MULT = 2.0
 RISK_PER_TRADE_PCT = 0.01  # 1% equity risked per trade
 MAX_EQUITY_PER_NAME = 0.10  # hard cap on notional exposure per name
 
+# Time stop: exit if a position hasn't made meaningful progress after N business days.
+TIME_STOP_DAYS = int(os.getenv("SWING_TIME_STOP_DAYS", "10"))
+TIME_STOP_PROGRESS_ATR = float(os.getenv("SWING_TIME_STOP_PROGRESS_ATR", "0.5"))
+
 # Commodity proxies / related ETFs (starter set; editable)
 PROXIES = [
     "SPY",
@@ -97,15 +101,9 @@ def supabase_headers() -> Dict[str, str]:
 
 
 def send_telegram(text: str) -> None:
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    if not bot_token or not chat_id:
-        return
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=15)
-    except Exception:
-        pass
+    from telegram_fmt import send_telegram as _send
+
+    _send(text, timeout=15)
 
 
 def load_universe() -> List[str]:
@@ -449,6 +447,11 @@ def eligible_to_sell(pos: Dict, trade_date: dt.date) -> bool:
 
 
 def upsert(table: str, rows: List[Dict], conflict_cols: List[str]) -> None:
+    """Upsert rows into Supabase.
+
+    Backward compatible: if optional metadata columns (e.g. rules_json) are not
+    deployed yet, retry once after stripping them.
+    """
     if not rows:
         return
     base = supabase_base()
@@ -456,9 +459,23 @@ def upsert(table: str, rows: List[Dict], conflict_cols: List[str]) -> None:
     headers = supabase_headers()
     headers["Prefer"] = "resolution=merge-duplicates"
     params = {"on_conflict": ",".join(conflict_cols)}
-    resp = requests.post(url, headers=headers, params=params, json=rows, timeout=30)
-    if resp.status_code >= 300:
-        raise RuntimeError(f"{table} upsert failed: {resp.status_code} {resp.text}")
+
+    def post(payload: List[Dict]) -> requests.Response:
+        return requests.post(url, headers=headers, params=params, json=payload, timeout=30)
+
+    resp = post(rows)
+    if resp.status_code < 300:
+        return
+
+    text = resp.text or ""
+    if "rules_json" in text and any(k in text.lower() for k in ["column", "schema cache", "unknown"]):
+        stripped = [{k: v for k, v in r.items() if k != "rules_json"} for r in rows]
+        resp2 = post(stripped)
+        if resp2.status_code < 300:
+            return
+        raise RuntimeError(f"{table} upsert failed (retry): {resp2.status_code} {resp2.text}")
+
+    raise RuntimeError(f"{table} upsert failed: {resp.status_code} {resp.text}")
 
 
 def fetch_recent_docs_for_ticker(ticker: str, since_date: dt.date, limit: int = 5) -> List[Dict]:
@@ -571,6 +588,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
 
     # Decide exits:
     # - Stop-loss breach exits immediately (even if not yet eligible to sell)
+    # - Time stop: if held long enough with insufficient progress, exit once eligible
     # - Otherwise, if eligible and (no longer in targets OR close below SMA50)
     exits: List[str] = []
     for t, p in held.items():
@@ -585,6 +603,21 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
 
         if not eligible_to_sell(p, trade_date):
             continue
+
+        # Time stop: after TIME_STOP_DAYS business days, if no meaningful progress, exit.
+        try:
+            entry_date = dt.date.fromisoformat(str(p.get("entry_date")))
+        except Exception:
+            entry_date = None
+        if entry_date is not None:
+            held_days = int(np.busday_count(entry_date.isoformat(), trade_date.isoformat()))
+            if held_days >= TIME_STOP_DAYS and close_px is not None and not row.empty:
+                atr_now = row.iloc[0].get("atr14")
+                if atr_now is not None and not pd.isna(atr_now):
+                    thresh = avg_cost + TIME_STOP_PROGRESS_ATR * float(atr_now)
+                    if close_px < thresh:
+                        exits.append(t)
+                        continue
 
         below = False
         if close_px is not None and not row.empty:
@@ -778,7 +811,25 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             cash -= total_cost
 
             order_id = f"{run_id}-BUY-{t}"
-            orders.append({"order_id": order_id, "date": trade_date.isoformat(), "ticker": t, "side": "buy", "target_weight": 0.0, "qty_estimate": shares, "status": "filled"})
+            orders.append({
+                "order_id": order_id,
+                "date": trade_date.isoformat(),
+                "ticker": t,
+                "side": "buy",
+                "target_weight": 0.0,
+                "qty_estimate": shares,
+                "status": "filled",
+                "rules_json": {
+                    "entry_price": round(fill_price, 6),
+                    "atr14": round(atr, 6),
+                    "stop_price": round(st, 6),
+                    "risk_per_share": round(risk_per_share, 6),
+                    "risk_budget": round(risk_budget, 2),
+                    "time_stop_days": TIME_STOP_DAYS,
+                    "time_stop_progress_atr": TIME_STOP_PROGRESS_ATR,
+                    "source": "regular",
+                },
+            })
             fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
 
             eligible_sell_date = (pd.Timestamp(trade_date) + pd.tseries.offsets.BDay(MIN_HOLD_DAYS)).date()
@@ -791,15 +842,29 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         if qty <= 0:
             continue
         px_close = daily_proxy(t) or float(p.get("avg_cost") or 0.0)
+        row = ind[ind["ticker"] == t]
+        atr_now = None
+        if not row.empty:
+            v = row.iloc[0].get("atr14")
+            if v is not None and not pd.isna(v):
+                atr_now = float(v)
+        avg_cost = float(p.get("avg_cost") or 0.0)
+        st_indic = stop_level(t, avg_cost)
         positions_out.append({
             "date": trade_date.isoformat(),
             "portfolio_id": DEFAULT_PORTFOLIO_ID,
             "ticker": t,
             "qty": round(qty, 6),
-            "avg_cost": round(float(p.get("avg_cost") or 0.0), 6),
+            "avg_cost": round(avg_cost, 6),
             "market_value": round(px_close * qty, 6),
             "entry_date": p.get("entry_date"),
             "eligible_sell_date": p.get("eligible_sell_date"),
+            "rules_json": {
+                "atr14_now": round(atr_now, 6) if atr_now is not None else None,
+                "stop_price_indicative": round(st_indic, 6) if st_indic is not None else None,
+                "time_stop_days": TIME_STOP_DAYS,
+                "time_stop_progress_atr": TIME_STOP_PROGRESS_ATR,
+            },
         })
 
     invested = float(sum(r["market_value"] for r in positions_out))
@@ -819,7 +884,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         f"[swing] {trade_date.isoformat()} executed.",
         note,
         f"Targets: {', '.join(targets[:10])}",
-        f"Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x, risk/trade={RISK_PER_TRADE_PCT:.1%}, max/name={MAX_EQUITY_PER_NAME:.0%}",
+        f"Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x, risk/trade={RISK_PER_TRADE_PCT:.1%}, max/name={MAX_EQUITY_PER_NAME:.0%}, time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR",
     ]
 
     # Show indicative stop levels for first few positions (computed from avg_cost and current ATR).
