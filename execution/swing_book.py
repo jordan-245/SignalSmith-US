@@ -50,6 +50,12 @@ CATALYST_NEWS_LOOKBACK_DAYS = 3
 FEES_BPS = 2
 SLIPPAGE_BPS = 5
 
+# Risk model (ATR-based stops + risk-based sizing)
+ATR_DAYS = 14
+ATR_STOP_MULT = 2.0
+RISK_PER_TRADE_PCT = 0.01  # 1% equity risked per trade
+MAX_EQUITY_PER_NAME = 0.10  # hard cap on notional exposure per name
+
 # Commodity proxies / related ETFs (starter set; editable)
 PROXIES = [
     "SPY",
@@ -166,7 +172,14 @@ def fetch_prices_window(tickers: List[str], end_date: dt.date, lookback_days: in
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute basic indicators per ticker (SMA50, SMA200, ret20, vol20, RSI14-ish)."""
+    """Compute basic indicators per ticker.
+
+    Indicators:
+    - SMA50, SMA200
+    - ret20, vol20
+    - RSI14
+    - ATR14 (true range rolling mean)
+    """
     if df.empty:
         return df
     out_rows: List[Dict] = []
@@ -187,6 +200,20 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         rs = gain / loss.replace(0, np.nan)
         rsi14 = 100 - (100 / (1 + rs))
 
+        # ATR14 from true range
+        gh = g.set_index("date")["high"].astype(float).reindex(s.index)
+        gl = g.set_index("date")["low"].astype(float).reindex(s.index)
+        prev_close = s.shift(1)
+        tr = pd.concat(
+            [
+                (gh - gl).abs(),
+                (gh - prev_close).abs(),
+                (gl - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        atr14 = tr.rolling(ATR_DAYS).mean()
+
         last_dt = s.index[-1]
         out_rows.append(
             {
@@ -198,6 +225,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
                 "ret20": float(ret20.iloc[-1]),
                 "vol20": float(vol20.iloc[-1]) if not pd.isna(vol20.iloc[-1]) else None,
                 "rsi14": float(rsi14.iloc[-1]) if not pd.isna(rsi14.iloc[-1]) else None,
+                "atr14": float(atr14.iloc[-1]) if not pd.isna(atr14.iloc[-1]) else None,
             }
         )
     return pd.DataFrame(out_rows)
@@ -532,15 +560,35 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     _, positions = fetch_latest_positions(DEFAULT_PORTFOLIO_ID, trade_date.isoformat())
     held = {p["ticker"]: p for p in positions if float(p.get("qty") or 0) > 0}
 
-    # Decide exits: if eligible and no longer in targets OR close below SMA50
+    def stop_level(ticker: str, avg_cost: float) -> Optional[float]:
+        row = ind[ind["ticker"] == ticker]
+        if row.empty:
+            return None
+        atr = row.iloc[0].get("atr14")
+        if atr is None or pd.isna(atr):
+            return None
+        return float(avg_cost) - ATR_STOP_MULT * float(atr)
+
+    # Decide exits:
+    # - Stop-loss breach exits immediately (even if not yet eligible to sell)
+    # - Otherwise, if eligible and (no longer in targets OR close below SMA50)
     exits: List[str] = []
     for t, p in held.items():
+        row = ind[ind["ticker"] == t]
+        close_px = float(row.iloc[0]["close"]) if not row.empty else None
+
+        avg_cost = float(p.get("avg_cost") or 0.0)
+        st = stop_level(t, avg_cost)
+        if close_px is not None and st is not None and close_px <= st:
+            exits.append(t)
+            continue
+
         if not eligible_to_sell(p, trade_date):
             continue
-        row = ind[ind["ticker"] == t]
+
         below = False
-        if not row.empty:
-            below = float(row.iloc[0]["close"]) < float(row.iloc[0]["sma50"])
+        if close_px is not None and not row.empty:
+            below = close_px < float(row.iloc[0]["sma50"])
         if (t not in targets) or below:
             exits.append(t)
 
@@ -666,19 +714,39 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         eligible_sell_date = (pd.Timestamp(trade_date) + pd.tseries.offsets.BDay(MIN_HOLD_DAYS)).date()
         held[t] = {"ticker": t, "qty": shares, "avg_cost": fill_price, "entry_date": trade_date.isoformat(), "eligible_sell_date": eligible_sell_date.isoformat()}
 
-    # Regular buys (from targets not held)
+    # Regular buys (from targets not held), sized by risk using ATR stop.
     buys = entries[: max(0, slots)]
     if buys:
-        alloc = cash / len(buys)
+        equity_now = estimate_equity_now()
+        risk_budget = RISK_PER_TRADE_PCT * equity_now
+        max_notional = MAX_EQUITY_PER_NAME * equity_now
+
         for t in buys:
+            row = ind[ind["ticker"] == t]
+            if row.empty or row.iloc[0].get("atr14") is None or pd.isna(row.iloc[0].get("atr14")):
+                continue
+            atr = float(row.iloc[0]["atr14"])
+
             vwap = first_hour_vwap_yf_1h(t, trade_date.isoformat()) or daily_proxy(t)
             if vwap is None:
                 continue
             fill_price = vwap * (1 + SLIPPAGE_BPS / 10_000.0)
+
+            st = fill_price - ATR_STOP_MULT * atr
+            risk_per_share = max(0.01, fill_price - st)
+
+            # Shares by risk
+            shares_risk = math.floor(risk_budget / risk_per_share)
+
+            # Shares by notional cap and available cash
             cost_per_share = fill_price * (1 + FEES_BPS / 10_000.0)
-            shares = math.floor(alloc / cost_per_share) if cost_per_share > 0 else 0
+            shares_cap = math.floor(max_notional / cost_per_share)
+            shares_cash = math.floor(cash / cost_per_share)
+
+            shares = int(max(0, min(shares_risk, shares_cap, shares_cash)))
             if shares <= 0:
                 continue
+
             total_notional = fill_price * shares
             fees = total_notional * (FEES_BPS / 10_000.0)
             total_cost = total_notional + fees
@@ -687,7 +755,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             cash -= total_cost
 
             order_id = f"{run_id}-BUY-{t}"
-            orders.append({"order_id": order_id, "date": trade_date.isoformat(), "ticker": t, "side": "buy", "target_weight": round(1.0 / MAX_POSITIONS, 6), "qty_estimate": shares, "status": "filled"})
+            orders.append({"order_id": order_id, "date": trade_date.isoformat(), "ticker": t, "side": "buy", "target_weight": 0.0, "qty_estimate": shares, "status": "filled"})
             fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
 
             eligible_sell_date = (pd.Timestamp(trade_date) + pd.tseries.offsets.BDay(MIN_HOLD_DAYS)).date()
@@ -728,7 +796,18 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         f"[swing] {trade_date.isoformat()} executed.",
         note,
         f"Targets: {', '.join(targets[:10])}",
+        f"Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x, risk/trade={RISK_PER_TRADE_PCT:.1%}, max/name={MAX_EQUITY_PER_NAME:.0%}",
     ]
+
+    # Show indicative stop levels for first few positions (computed from avg_cost and current ATR).
+    stops_preview = []
+    for t, p in list(sorted(held.items()))[:5]:
+        avg_cost = float(p.get("avg_cost") or 0.0)
+        st = stop_level(t, avg_cost)
+        if st is not None:
+            stops_preview.append(f"{t}@{st:.2f}")
+    if stops_preview:
+        summary_lines.append("Stops (indicative): " + ", ".join(stops_preview))
     if avoided:
         summary_lines.append(f"Earnings-avoided (next {EARNINGS_AVOID_DAYS} sessions): {', '.join(avoided[:10])}{'…' if len(avoided) > 10 else ''}")
     cat_filled = len([o for o in orders if str(o.get("order_id", "")).find("-CATALYST-BUY-") != -1])
