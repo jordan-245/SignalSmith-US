@@ -84,9 +84,27 @@ def load_tickers(path: str, extras: List[str]) -> List[str]:
 
 
 def fetch_prices_range(tickers: List[str], start_date: dt.date, end_date: dt.date) -> Tuple[List[Dict], List[Dict], List[str]]:
-    all_tickers = sorted(set(tickers + [BENCHMARK]))
+    """Fetch OHLCV for tickers over [start_date, end_date).
+
+    Note: Yahoo Finance uses hyphenated class share tickers (e.g. BRK-B, BF-B)
+    while many universes use dot notation (BRK.B, BF.B). We normalize *only for
+    download*, then map back to the original ticker symbols for storage.
+    """
+
+    def to_yahoo_symbol(t: str) -> str:
+        # Most common mapping: dot-class → hyphen-class.
+        # Keep canonical storage tickers untouched elsewhere.
+        return t.replace(".", "-")
+
+    tickers = [t.upper() for t in tickers]
+    canonical = sorted(set(tickers))
+    canon_to_yf = {t: to_yahoo_symbol(t) for t in canonical}
+
+    all_yf = sorted(set([canon_to_yf[t] for t in canonical] + [BENCHMARK]))
+    yf_to_canon = {v: k for k, v in canon_to_yf.items()}
+
     data = yf.download(
-        tickers=all_tickers,
+        tickers=all_yf,
         start=start_date.isoformat(),
         end=end_date.isoformat(),
         progress=False,
@@ -109,7 +127,7 @@ def fetch_prices_range(tickers: List[str], start_date: dt.date, end_date: dt.dat
 
     records: List[Dict] = []
     benchmark_rows: List[Dict] = []
-    tickers_with_data: set[str] = set()
+    tickers_with_data: set[str] = set()  # canonical tickers
 
     def get_val(field: str, ts: pd.Timestamp, ticker: str) -> float | None:
         df = fields.get(field)
@@ -129,16 +147,17 @@ def fetch_prices_range(tickers: List[str], start_date: dt.date, end_date: dt.dat
 
     for ts in data.index:
         date_str = pd.to_datetime(ts).date().isoformat()
-        for ticker in all_tickers:
+        for ticker in canonical + [BENCHMARK]:
+            yf_ticker = BENCHMARK if ticker == BENCHMARK else canon_to_yf.get(ticker, ticker)
             row = {
                 "date": date_str,
-                "ticker": ticker,
-                "open": get_val("Open", ts, ticker),
-                "high": get_val("High", ts, ticker),
-                "low": get_val("Low", ts, ticker),
-                "close": get_val("Close", ts, ticker),
-                "adj_close": get_val("Adj Close", ts, ticker) or get_val("Close", ts, ticker),
-                "volume": get_val("Volume", ts, ticker),
+                "ticker": ticker if ticker != BENCHMARK else BENCHMARK,
+                "open": get_val("Open", ts, yf_ticker),
+                "high": get_val("High", ts, yf_ticker),
+                "low": get_val("Low", ts, yf_ticker),
+                "close": get_val("Close", ts, yf_ticker),
+                "adj_close": get_val("Adj Close", ts, yf_ticker) or get_val("Close", ts, yf_ticker),
+                "volume": get_val("Volume", ts, yf_ticker),
             }
             if all(val is None for val in [row["open"], row["high"], row["low"], row["close"], row["adj_close"], row["volume"]]):
                 continue
@@ -159,7 +178,7 @@ def fetch_prices_range(tickers: List[str], start_date: dt.date, end_date: dt.dat
                 records.append(row)
                 tickers_with_data.add(ticker)
 
-    missing = sorted(set(tickers) - tickers_with_data)
+    missing = sorted(set(canonical) - tickers_with_data)
     return records, benchmark_rows, missing
 
 
