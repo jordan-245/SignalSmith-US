@@ -20,8 +20,10 @@ Safety: paper-only.
 from __future__ import annotations
 
 import datetime as dt
+import io
 import math
 import os
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -208,19 +210,33 @@ def rank_candidates(ind: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def market_is_open(date_str: str, calendar: str = "XNYS") -> bool:
+    """True if the exchange calendar has a session on date_str."""
+    try:
+        import exchange_calendars as xcals  # type: ignore
+
+        cal = xcals.get_calendar(calendar)
+        return bool(cal.is_session(date_str))
+    except Exception:
+        d = dt.date.fromisoformat(date_str)
+        return d.weekday() < 5
+
+
 def first_hour_vwap_yf_1h(ticker: str, date_str: str, tz: str = "America/New_York") -> Optional[float]:
     d0 = dt.date.fromisoformat(date_str)
     d1 = d0 + dt.timedelta(days=1)
     try:
-        bars = yf.download(
-            tickers=ticker,
-            start=d0.isoformat(),
-            end=d1.isoformat(),
-            interval="1h",
-            progress=False,
-            auto_adjust=False,
-            prepost=False,
-        )
+        # yfinance can be noisy on missing intraday; suppress its stdout/stderr.
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            bars = yf.download(
+                tickers=ticker,
+                start=d0.isoformat(),
+                end=d1.isoformat(),
+                interval="1h",
+                progress=False,
+                auto_adjust=False,
+                prepost=False,
+            )
     except Exception:
         return None
 
@@ -345,6 +361,11 @@ def market_note(ind: pd.DataFrame) -> str:
 
 
 def run(trade_date: dt.date) -> None:
+    # Skip weekends/holidays so the cron schedule is safe.
+    if not market_is_open(trade_date.isoformat()):
+        send_telegram(f"[swing] {trade_date.isoformat()} market closed; skipping.")
+        return
+
     ensure_portfolio(DEFAULT_PORTFOLIO_ID, DEFAULT_PORTFOLIO_NAME, DEFAULT_CASH)
 
     universe = load_universe()
