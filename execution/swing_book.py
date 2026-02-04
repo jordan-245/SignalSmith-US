@@ -891,11 +891,15 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     ]
     if note and "unknown" not in note.lower():
         summary_lines.append(f"- {note}")
-    summary_lines.extend(
-        [
-            f"- Targets: {', '.join(targets[:10])}",
-            f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_PCT:.1%} · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR",
-        ]
+    top_targets = targets[:10]
+    targets_line = ", ".join(top_targets[:5])
+    if len(top_targets) > 5:
+        targets_line += ", " + ", ".join(top_targets[5:])
+    summary_lines.append(f"- Targets (top {len(top_targets)}):")
+    summary_lines.append(f"  - {targets_line}")
+
+    summary_lines.append(
+        f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_PCT:.1%} · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
     )
 
     # Show indicative stop levels for first few positions (computed from avg_cost and current ATR).
@@ -924,8 +928,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             summary_lines.append("- Catalyst notes: " + "; ".join(shown))
 
     summary_lines.append(
-        f"- Trades: sells={len(exits)} · buys={len(buys)} · positions={len(positions_out)} · equity=${equity:,.2f} · cash=${cash:,.2f}"
+        f"- Trades: sells={len(exits)} · buys={len(buys)} · positions={len(positions_out)}"
     )
+    summary_lines.append(f"- Equity: ${equity:,.2f} · Cash: ${cash:,.2f}")
     send_telegram("\n".join(summary_lines))
 
 
