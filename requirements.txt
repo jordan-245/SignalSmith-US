@@ -11,3 +11,7 @@ exchange-calendars
 feedparser
 readability-lxml
 lxml
+
+# UI (local-only dashboard)
+streamlit
+plotly
