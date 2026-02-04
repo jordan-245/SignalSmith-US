@@ -170,8 +170,10 @@ def main() -> None:
 
     top_tickers = sorted(ticker_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:8]
 
-    # Concise mode: only notify when something looks materially actionable (red flags by default).
-    noteworthy = bool(neg_hits)
+    # Notify when something looks materially actionable.
+    # - red flags always
+    # - mention spikes optionally (doc volume threshold)
+    noteworthy = bool(neg_hits) or (len(rows) >= args.min_docs)
     if not (noteworthy or args.force):
         print("HEARTBEAT_OK")
         return
