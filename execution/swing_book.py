@@ -670,10 +670,13 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
                 catalyst_buys.append(t)
                 catalyst_reasons[t] = why
 
-    # Execute catalyst buys with strict caps
+    # Execute catalyst buys with strict caps + same ATR risk sizing.
     equity_now = estimate_equity_now()
     catalyst_budget_total = CATALYST_MAX_EQUITY_TOTAL * equity_now
     catalyst_budget_name = CATALYST_MAX_EQUITY_PER_NAME * equity_now
+
+    risk_budget = RISK_PER_TRADE_PCT * equity_now
+    max_notional = MAX_EQUITY_PER_NAME * equity_now
 
     slots = MAX_POSITIONS - len(held)
     catalyst_buys = catalyst_buys[: max(0, slots)]
@@ -684,16 +687,36 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             break
         if catalyst_allocated >= catalyst_budget_total:
             break
-        dollars = min(catalyst_budget_name, catalyst_budget_total - catalyst_allocated, cash)
-        if dollars <= 25:  # ignore tiny allocations
+
+        row = ind[ind["ticker"] == t]
+        if row.empty or row.iloc[0].get("atr14") is None or pd.isna(row.iloc[0].get("atr14")):
             continue
+        atr = float(row.iloc[0]["atr14"])
 
         vwap = first_hour_vwap_yf_1h(t, trade_date.isoformat()) or daily_proxy(t)
         if vwap is None:
             continue
         fill_price = vwap * (1 + SLIPPAGE_BPS / 10_000.0)
+
+        st = fill_price - ATR_STOP_MULT * atr
+        risk_per_share = max(0.01, fill_price - st)
+
+        # Caps: catalyst bucket caps, plus global max/name notional.
+        dollars_cap = min(
+            catalyst_budget_name,
+            catalyst_budget_total - catalyst_allocated,
+            max_notional,
+            cash,
+        )
+        if dollars_cap <= 25:
+            continue
+
         cost_per_share = fill_price * (1 + FEES_BPS / 10_000.0)
-        shares = math.floor(dollars / cost_per_share) if cost_per_share > 0 else 0
+
+        shares_risk = math.floor(risk_budget / risk_per_share)
+        shares_cap = math.floor(dollars_cap / cost_per_share)
+
+        shares = int(max(0, min(shares_risk, shares_cap)))
         if shares <= 0:
             continue
 
