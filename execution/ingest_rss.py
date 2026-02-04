@@ -49,7 +49,11 @@ def load_feeds(args: argparse.Namespace) -> List[str]:
             s = line.strip()
             if not s or s.startswith("#"):
                 continue
-            feeds.append(s)
+            # Allow inline comments after a URL.
+            if "#" in s:
+                s = s.split("#", 1)[0].strip()
+            if s:
+                feeds.append(s)
     # de-dupe
     uniq: List[str] = []
     seen = set()
