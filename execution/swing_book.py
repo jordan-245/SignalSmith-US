@@ -104,9 +104,11 @@ SECTOR_ETF = {
 
 SECTOR_ETFS = sorted(set(SECTOR_ETF.values()))
 
-# Fundamental/liquidity guardrails (yfinance fast_info). Conservative defaults.
-MIN_MARKET_CAP = float(os.getenv("SWING_MIN_MARKET_CAP", "5000000000"))  # $5B
-MIN_AVG_VOLUME = float(os.getenv("SWING_MIN_AVG_VOLUME", "1000000"))     # 1M shares
+# Fundamental/liquidity guardrails.
+# NOTE: We’re now targeting “smallish” names too, so keep these as *guardrails*, not hard large-cap gates.
+MIN_MARKET_CAP = float(os.getenv("SWING_MIN_MARKET_CAP", "0"))  # default: no hard cap
+MIN_AVG_VOLUME = float(os.getenv("SWING_MIN_AVG_VOLUME", "0"))  # default: no hard cap
+MIN_AVG_DOLLAR_VOL = float(os.getenv("SWING_MIN_AVG_DOLLAR_VOL", "20000000"))  # $20M/day default
 
 
 def load_env() -> None:
@@ -260,13 +262,18 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
         adx14 = dx.rolling(14).mean()
 
-        # Volume confirmation: 20d vs 60d average volume
+        # Volume confirmation: 20d vs 60d average volume + dollar volume snapshot
         vol_ratio = None
+        avg_vol20 = None
+        avg_dollar_vol20 = None
         if vol is not None:
             v20 = vol.rolling(20).mean()
             v60 = vol.rolling(60).mean()
             vr = v20 / v60.replace(0, np.nan)
             vol_ratio = float(vr.iloc[-1]) if not pd.isna(vr.iloc[-1]) else None
+            avg_vol20 = float(v20.iloc[-1]) if not pd.isna(v20.iloc[-1]) else None
+            if avg_vol20 is not None:
+                avg_dollar_vol20 = float(avg_vol20 * float(s.iloc[-1]))
 
         # Overextension: distance from SMA200
         dist_sma200 = float(s.iloc[-1] / sma200.iloc[-1] - 1.0) if not pd.isna(sma200.iloc[-1]) else None
@@ -290,6 +297,8 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
                 "atr14": float(atr14.iloc[-1]) if not pd.isna(atr14.iloc[-1]) else None,
                 "adx14": float(adx14.iloc[-1]) if not pd.isna(adx14.iloc[-1]) else None,
                 "vol_ratio": vol_ratio,
+                "avg_vol20": avg_vol20,
+                "avg_dollar_vol20": avg_dollar_vol20,
                 "dist_sma200": dist_sma200,
                 "near_52w": near_52w,
             }
@@ -738,6 +747,11 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         cand = cand[(cand["market_cap"].isna()) | (cand["market_cap"].astype(float) >= MIN_MARKET_CAP)]
         cand = cand[(cand["avg_volume"].isna()) | (cand["avg_volume"].astype(float) >= MIN_AVG_VOLUME)]
 
+        # Liquidity guardrail: average dollar volume (from Supabase OHLCV) must be reasonable.
+        # This helps avoid microstructure traps where spreads/impact dominate.
+        if "avg_dollar_vol20" in cand.columns:
+            cand = cand[(cand["avg_dollar_vol20"].isna()) | (cand["avg_dollar_vol20"].astype(float) >= MIN_AVG_DOLLAR_VOL)]
+
         # Sector leadership boost (small)
         cand["score"] = cand["score"] + 0.20 * cand["sector_rs"].fillna(0.0)
 
@@ -845,8 +859,29 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         fees = notional * (FEES_BPS / 10_000.0)
         cash += notional - fees
 
+        # Implementation Shortfall benchmark (decision price): latest available close.
+        row = ind[ind["ticker"] == t]
+        bench_px = float(row.iloc[0]["close"]) if not row.empty else fill_price
+        impl_shortfall_per_share = (bench_px - fill_price)  # sell sign=-1 => -1*(fill-bench) = bench-fill
+
         order_id = f"{run_id}-SELL-{t}"
-        orders.append({"order_id": order_id, "date": trade_date.isoformat(), "ticker": t, "side": "sell", "target_weight": 0.0, "qty_estimate": qty, "status": "filled"})
+        orders.append({
+            "order_id": order_id,
+            "date": trade_date.isoformat(),
+            "ticker": t,
+            "side": "sell",
+            "target_weight": 0.0,
+            "qty_estimate": qty,
+            "status": "filled",
+            "rules_json": {
+                "benchmark_price": round(bench_px, 6),
+                "benchmark_method": "last_close_available",
+                "fill_price": round(fill_price, 6),
+                "implementation_shortfall_per_share": round(impl_shortfall_per_share, 6),
+                "implementation_shortfall_dollars": round(impl_shortfall_per_share * qty, 2),
+                "source": "exit",
+            },
+        })
         fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
         held.pop(t, None)
 
@@ -1004,6 +1039,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             risk_pct = risk_pct_for_trade("regular", i, max(1, len(buys)), fill_price, atr)
             risk_budget = risk_pct * equity_now
 
+            # Implementation Shortfall benchmark (decision price): latest available close in indicators.
+            bench_px = float(row.iloc[0]["close"]) if not row.empty else fill_price
+
             # Shares by risk
             shares_risk = math.floor(risk_budget / risk_per_share)
 
@@ -1024,6 +1062,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             cash -= total_cost
 
             order_id = f"{run_id}-BUY-{t}"
+            impl_shortfall_per_share = (fill_price - bench_px)  # buy sign=+1
             orders.append({
                 "order_id": order_id,
                 "date": trade_date.isoformat(),
@@ -1033,7 +1072,11 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
                 "qty_estimate": shares,
                 "status": "filled",
                 "rules_json": {
+                    "benchmark_price": round(bench_px, 6),
+                    "benchmark_method": "last_close_available",
                     "entry_price": round(fill_price, 6),
+                    "implementation_shortfall_per_share": round(impl_shortfall_per_share, 6),
+                    "implementation_shortfall_dollars": round(impl_shortfall_per_share * shares, 2),
                     "atr14": round(atr, 6),
                     "stop_price": round(st, 6),
                     "risk_per_share": round(risk_per_share, 6),

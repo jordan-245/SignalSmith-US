@@ -66,7 +66,7 @@ def fetch_orders(date: str) -> List[dict]:
     base = supabase_base()
     url = f"{base}/rest/v1/paper_orders"
     params = [
-        ("select", "order_id,date,ticker,side,target_weight,qty_estimate,status"),
+        ("select", "order_id,date,ticker,side,target_weight,qty_estimate,status,rules_json"),
         ("date", f"eq.{date}"),
         ("order", "ticker.asc"),
     ]
@@ -154,7 +154,12 @@ def append_entry(date: str, portfolio_id: str, equity_row: Optional[dict], order
             tw_s = f"{float(tw)*100:.2f}%" if tw is not None else ""
             qe = o.get("qty_estimate")
             qe_s = f"~{float(qe):.2f}" if qe is not None else ""
-            lines.append(f"- {o.get('ticker')} {o.get('side')} {qe_s} @ target {tw_s} ({o.get('status')})")
+            rj = o.get("rules_json") or {}
+            is_d = rj.get("implementation_shortfall_dollars")
+            is_s = f" | IS={fmt_money(is_d)}" if is_d is not None else ""
+            rp = rj.get("risk_pct")
+            rp_s = f" | risk={float(rp)*100:.1f}%" if rp is not None else ""
+            lines.append(f"- {o.get('ticker')} {o.get('side')} {qe_s} @ target {tw_s} ({o.get('status')}){rp_s}{is_s}")
 
     if fills:
         lines.append("\n### Fills")
