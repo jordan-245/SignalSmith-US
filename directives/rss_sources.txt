@@ -5,22 +5,22 @@
 # --- Scrape-friendly (usually)
 https://www.sec.gov/Archives/edgar/usgaap.rss.xml
 https://www.prnewswire.com/rss/news-releases-list.rss
-https://www.globenewswire.com/RssFeed/industry/All?format=xml
+# https://www.globenewswire.com/RssFeed/industry/All?format=xml  # 400 currently
 https://www.eia.gov/rss/todayinenergy.xml
 https://oilprice.com/rss/main
-https://www.fxstreet.com/rss/commodities
-https://www.fxstreet.com/rss/news
+# https://www.fxstreet.com/rss/commodities  # 404 currently
+# https://www.fxstreet.com/rss/news         # 404 currently
 https://www.investing.com/rss/news_25.rss
 https://www.investing.com/rss/news_95.rss
 https://www.investing.com/rss/news_301.rss
 
 # --- Macro / policy (usually scrape-friendly)
 https://www.federalreserve.gov/feeds/press_all.xml
-https://home.treasury.gov/feeds/press.xml
-https://www.whitehouse.gov/briefing-room/feed/
+# https://home.treasury.gov/feeds/press.xml  # 404 currently
+# https://www.whitehouse.gov/briefing-room/feed/  # 404 currently
 
 # --- Markets / economy (varies; keep light)
-https://www.bea.gov/rss.xml
+# https://www.bea.gov/rss.xml  # 404 currently
 https://www.bls.gov/feed/bls_latest.rss
 
 # --- High-signal company/IR aggregations
@@ -29,13 +29,13 @@ https://www.nasdaq.com/feed/rssoutbound?category=Stocks
 
 # --- Sector-specific (US): high-signal policy/regulatory + industry news
 # Tech / cyber
-https://www.cisa.gov/cybersecurity-advisories/all.xml
+# https://www.cisa.gov/cybersecurity-advisories/all.xml  # 403 currently
 
 # Healthcare / pharma
-https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/fda-news-releases/rss.xml
+# https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/fda-news-releases/rss.xml  # 404 currently
 
 # Financials / banking regulation
-https://www.fdic.gov/news/press-releases/index.xml
+# https://www.fdic.gov/news/press-releases/index.xml  # 404 currently
 https://www.occ.gov/rss/rss-news-releases.xml
 
 # Energy / climate
