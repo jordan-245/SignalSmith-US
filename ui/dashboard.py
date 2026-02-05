@@ -59,11 +59,6 @@ def sb_get(table: str, params: List[Tuple[str, str]], timeout: int = 20) -> List
 
 
 @st.cache_data(ttl=30)
-def list_portfolios() -> List[str]:
-    rows = sb_get("paper_portfolio", [("select", "portfolio_id"), ("order", "portfolio_id.asc")])
-    return [r["portfolio_id"] for r in rows]
-
-
 @st.cache_data(ttl=30)
 def latest_equity(portfolio_id: str) -> Optional[Dict[str, Any]]:
     rows = sb_get(
@@ -201,21 +196,16 @@ def main() -> None:
     load_env()
 
     st.set_page_config(page_title="SignalSmith Dashboard", layout="wide")
-    st.title("SignalSmith — Local Dashboard (read-only)")
+    st.title("SignalSmith — Swing Dashboard")
+    st.caption("Swing book only. Data refreshes automatically.")
 
-    try:
-        ports = list_portfolios()
-    except Exception as exc:
-        st.error(f"Supabase connection failed: {exc}")
-        st.stop()
+    # We only support the swing portfolio going forward.
+    portfolio_id = "swing"
 
-    colA, colB, colC = st.columns([2, 1, 1])
-    with colA:
-        portfolio_id = st.selectbox("Portfolio", options=ports, index=ports.index("swing") if "swing" in ports else 0)
-    with colB:
+    with st.sidebar:
+        st.header("Controls")
         days = st.selectbox("Equity window", options=[30, 90, 180, 365, 730], index=1)
-    with colC:
-        st.caption("Data refreshes automatically every ~30–60s")
+        st.caption("All panels are Swing book only.")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Equity", "Positions", "Orders & Fills", "Runs & Todos"])
 
