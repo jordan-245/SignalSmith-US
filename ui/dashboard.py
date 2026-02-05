@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -207,7 +208,7 @@ def main() -> None:
         days = st.selectbox("Equity window", options=[30, 90, 180, 365, 730], index=1)
         st.caption("All panels are Swing book only.")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Equity", "Positions", "Orders & Fills", "Runs & Todos"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Equity curve", "Positions", "Orders & Fills", "Runs & Todos"])
 
     with tab1:
         eq = latest_equity(portfolio_id)
@@ -230,11 +231,54 @@ def main() -> None:
         if df.empty:
             st.info("No equity curve yet.")
         else:
-            fig = px.line(df, x="date", y="equity", title=f"Equity curve — {portfolio_id}")
+            df = df.sort_values("date")
+            # Key stats
+            start_eq = float(df["equity"].iloc[0])
+            end_eq = float(df["equity"].iloc[-1])
+            pnl = end_eq - start_eq
+            pnl_pct = (pnl / start_eq) if start_eq else 0.0
+
+            # Drawdown
+            peak = df["equity"].cummax()
+            dd = (df["equity"] / peak) - 1.0
+            max_dd = float(dd.min())
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Start equity", f"${start_eq:,.0f}")
+            c2.metric("Current equity", f"${end_eq:,.0f}", f"{pnl:+,.0f} ({pnl_pct:+.2%})")
+            c3.metric("Max drawdown", f"{max_dd:.2%}")
+            # crude daily vol
+            ret = df["equity"].pct_change().dropna()
+            vol = float(ret.std()) if len(ret) else 0.0
+            c4.metric("Daily vol (std)", f"{vol:.2%}")
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df["date"], y=df["equity"], mode="lines", name="Equity"))
+            fig.add_trace(go.Scatter(x=df["date"], y=peak, mode="lines", name="Peak", line=dict(dash="dot")))
+            fig.update_layout(
+                title=f"Equity curve — {portfolio_id}",
+                margin=dict(l=10, r=10, t=50, b=10),
+                height=420,
+                hovermode="x unified",
+            )
             st.plotly_chart(fig, use_container_width=True)
-            df2 = df.copy()
-            df2["ret"] = df2["equity"].pct_change()
-            st.dataframe(df2.tail(50), use_container_width=True, hide_index=True)
+
+            dd_fig = go.Figure()
+            dd_fig.add_trace(go.Scatter(x=df["date"], y=dd, mode="lines", name="Drawdown"))
+            dd_fig.update_layout(
+                title="Drawdown",
+                margin=dict(l=10, r=10, t=50, b=10),
+                height=240,
+                hovermode="x unified",
+                yaxis_tickformat=".0%",
+            )
+            st.plotly_chart(dd_fig, use_container_width=True)
+
+            with st.expander("Equity table (last 50)"):
+                df2 = df.copy()
+                df2["ret"] = df2["equity"].pct_change()
+                df2["drawdown"] = dd
+                st.dataframe(df2.tail(50), use_container_width=True, hide_index=True)
 
     with tab3:
         df_pos = latest_positions(portfolio_id)
