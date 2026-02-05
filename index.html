@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta http-equiv="refresh" content="60"/>
   <title>SignalSmith Dashboard</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Space+Grotesk:wght@400;500;600&display=swap');
@@ -143,8 +144,8 @@
       </div>
       <div class="pill">
         <span class="pill-label">Updated (AEST)</span>
-        <span class="pill-value">2026-02-05T21:50:04+10:00</span>
-        <div class="muted" style="margin-top:6px; font-size:12px;">UTC: 2026-02-05T11:50:04Z</div>
+        <span class="pill-value" id="updated_aest">2026-02-05T21:55:28+10:00</span>
+        <div class="muted" style="margin-top:6px; font-size:12px;">UTC: <span id="updated_utc">2026-02-05T11:55:28Z</span></div>
       </div>
     </header>
 
@@ -155,21 +156,25 @@
         <div class="panel-header">
           <h2>Next runs</h2>
         </div>
-        <div class="kv"><div class="kv-row"><span>rss_ingest_next_aest</span><span>2026-02-05T22:05:00+10:00</span></div><div class="kv-row"><span>rss_ingest_next_utc</span><span>2026-02-05T12:05:00Z</span></div><div class="kv-row"><span>approval_sweep_next_aest</span><span>2026-02-05T21:30:00+10:00</span></div><div class="kv-row"><span>approval_sweep_next_utc</span><span>2026-02-05T11:30:00Z</span></div><div class="kv-row"><span>swing_preopen_time</span><span>08:30 America/New_York</span></div><div class="kv-row"><span>swing_postclose_time</span><span>16:45 America/New_York</span></div></div>
+        <div id="next_runs">
+          <div class="kv"><div class="kv-row"><span>rss_ingest_next_aest</span><span>2026-02-05T22:05:00+10:00</span></div><div class="kv-row"><span>rss_ingest_next_utc</span><span>2026-02-05T12:05:00Z</span></div><div class="kv-row"><span>approval_sweep_next_aest</span><span>2026-02-05T21:30:00+10:00</span></div><div class="kv-row"><span>approval_sweep_next_utc</span><span>2026-02-05T11:30:00Z</span></div><div class="kv-row"><span>swing_preopen_time</span><span>08:30 America/New_York</span></div><div class="kv-row"><span>swing_postclose_time</span><span>16:45 America/New_York</span></div></div>
+        </div>
       </article>
 
       <article class="panel" style="--delay: 120ms;">
         <div class="panel-header">
           <h2>Equity (swing)</h2>
         </div>
-        <div class="empty">No data available.</div>
+        <div id="equity">
+          <div class="empty">No data available.</div>
+        </div>
       </article>
     </section>
 
     <section class="panel" style="--delay: 180ms;">
       <div class="panel-header">
         <h2>Positions (swing)</h2>
-        <span class="tag">0 open</span>
+        <span class="tag"><span id="positions_count">0</span> open</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -182,7 +187,7 @@
               <th>Entry date</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="positions_tbody">
             <tr><td class="empty-cell" colspan="5">No positions.</td></tr>
           </tbody>
         </table>
@@ -192,9 +197,9 @@
     <section class="panel" style="--delay: 240ms;">
       <div class="panel-header">
         <h2>Leads</h2>
-        <span class="tag">3 items</span>
+        <span class="tag"><span id="leads_count">3</span> items</span>
       </div>
-      <div class="leads-grid">
+      <div class="leads-grid" id="leads_grid">
         <article class="lead-card"><h3>Lead template</h3><ul class="bullets"><li>Ticker / Company</li><li>Theme (narrative bucket)</li><li>Catalyst(s) + dates</li><li>SEC / dilution radar notes (S-1/S-3/424B5/FWP; ATM/registered direct/warrants/resale)</li><li>Yahoo fundamentals snapshot (mkt cap, PE, PS, PB, EV/EBITDA, shares/float)</li><li>Status (watch / research / avoid / triggered)</li><li>Next check</li></ul></article><article class="lead-card"><h3>(seed) IVDA — Iveda Solutions, Inc.</h3><ul class="bullets"><li>Theme: small-cap security/AI surveillance (needs further validation)</li><li>Dilution radar: S-1/A flagged (ATM + Registered Direct + Warrants + Resale/Selling SH)</li><li>Next check: pull stated $ raise size / key terms; compare to market cap + recent price action</li></ul></article><article class="lead-card"><h3>(seed) Picard Medical, Inc.</h3><ul class="bullets"><li>Theme: medtech (needs further validation)</li><li>Dilution radar: S-1/A flagged (Warrants + Resale/Selling SH)</li><li>Next check: confirm whether this is primarily a resale vs new issuance; parse headline offering amounts vs boilerplate</li></ul></article>
       </div>
     </section>
@@ -207,8 +212,8 @@
       <details class="code-block">
         <summary>View JSON</summary>
         <pre>{
-  "generated_at_utc": "2026-02-05T11:50:04Z",
-  "generated_at_aest": "2026-02-05T21:50:04+10:00",
+  "generated_at_utc": "2026-02-05T11:55:28Z",
+  "generated_at_aest": "2026-02-05T21:55:28+10:00",
   "equity": null,
   "positions": [],
   "leads": [
@@ -236,5 +241,9 @@
       </details>
     </section>
   </main>
+
+
+    <!-- Live-ish updates are handled by page refresh cadence on static hosting. -->
+  </script>
 </body>
 </html>
