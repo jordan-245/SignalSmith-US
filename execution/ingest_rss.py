@@ -92,7 +92,9 @@ def discover_urls(feed_url: str, timeout: int) -> List[str]:
     for attempt in range(1, 3 + 1):
         try:
             t = _timeout_for(feed_url)
-            resp = requests.get(feed_url, headers=ua, timeout=t)
+            # Use explicit (connect, read) timeouts. Some hosts stall IPv6 connects
+            # and can ignore a single total timeout depending on the underlying socket behavior.
+            resp = requests.get(feed_url, headers=ua, timeout=(min(5, t), t))
             resp.raise_for_status()
             parsed = feedparser.parse(resp.content)
 

@@ -16,3 +16,8 @@ Rules:
 - **Follow-ups:** instrument with timestamps around each stage; add a max-runtime watchdog to prevent future flaps.
 
 ---
+
+## 2026-02-05T20:09:15+00:00
+- Context: RSS ingest hung on IPv6 SYN-SENT connect; no output for ~1m+
+- Change: requests.get timeout now uses (connect, read) tuple: (min(5,t), t) in execution/ingest_rss.py
+- Validation: reran ingest_rss (max-items 80) -> exit code 0
