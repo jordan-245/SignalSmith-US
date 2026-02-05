@@ -224,6 +224,7 @@ def render_html(payload: Dict[str, Any]) -> str:
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta http-equiv="refresh" content="60"/>
   <title>SignalSmith Dashboard</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Space+Grotesk:wght@400;500;600&display=swap');
@@ -364,8 +365,8 @@ def render_html(payload: Dict[str, Any]) -> str:
       </div>
       <div class="pill">
         <span class="pill-label">Updated (AEST)</span>
-        <span class="pill-value">{esc(payload.get('generated_at_aest',''))}</span>
-        <div class="muted" style="margin-top:6px; font-size:12px;">UTC: {esc(payload.get('generated_at_utc',''))}</div>
+        <span class="pill-value" id="updated_aest">{esc(payload.get('generated_at_aest',''))}</span>
+        <div class="muted" style="margin-top:6px; font-size:12px;">UTC: <span id="updated_utc">{esc(payload.get('generated_at_utc',''))}</span></div>
       </div>
     </header>
 
@@ -376,21 +377,25 @@ def render_html(payload: Dict[str, Any]) -> str:
         <div class="panel-header">
           <h2>Next runs</h2>
         </div>
-        {render_kv(payload.get('next_runs', {}))}
+        <div id="next_runs">
+          {render_kv(payload.get('next_runs', {}))}
+        </div>
       </article>
 
       <article class="panel" style="--delay: 120ms;">
         <div class="panel-header">
           <h2>Equity (swing)</h2>
         </div>
-        {render_kv(payload.get('equity') or {})}
+        <div id="equity">
+          {render_kv(payload.get('equity') or {})}
+        </div>
       </article>
     </section>
 
     <section class="panel" style="--delay: 180ms;">
       <div class="panel-header">
         <h2>Positions (swing)</h2>
-        <span class="tag">{len(positions)} open</span>
+        <span class="tag"><span id="positions_count">{len(positions)}</span> open</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -403,7 +408,7 @@ def render_html(payload: Dict[str, Any]) -> str:
               <th>Entry date</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="positions_tbody">
             {render_positions(positions)}
           </tbody>
         </table>
@@ -413,9 +418,9 @@ def render_html(payload: Dict[str, Any]) -> str:
     <section class="panel" style="--delay: 240ms;">
       <div class="panel-header">
         <h2>Leads</h2>
-        <span class="tag">{len(leads)} items</span>
+        <span class="tag"><span id="leads_count">{len(leads)}</span> items</span>
       </div>
-      <div class="leads-grid">
+      <div class="leads-grid" id="leads_grid">
         {render_leads(leads)}
       </div>
     </section>
@@ -431,6 +436,10 @@ def render_html(payload: Dict[str, Any]) -> str:
       </details>
     </section>
   </main>
+
+
+    <!-- Live-ish updates are handled by page refresh cadence on static hosting. -->
+  </script>
 </body>
 </html>"""
 
