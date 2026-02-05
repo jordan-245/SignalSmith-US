@@ -1,66 +1,210 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>SignalSmith Dashboard</title>
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 980px; }
-    h1 { margin: 0 0 6px 0; }
-    .muted { color: #666; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px 16px; margin: 14px 0; }
-    code, pre { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border-bottom: 1px solid #eee; text-align: left; padding: 6px 8px; font-size: 14px; }
+    @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Space+Grotesk:wght@400;500;600&display=swap');
+    :root {
+      --bg: #f6f1ea;
+      --bg-2: #eef3ee;
+      --ink: #161616;
+      --muted: #5f646b;
+      --card: #ffffff;
+      --stroke: #e5ddd2;
+      --accent: #0f6b5c;
+      --accent-2: #d59553;
+      --shadow: 0 18px 40px rgba(20, 24, 28, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+      background:
+        radial-gradient(1200px circle at 10% 0%, #fff4e2 0, var(--bg) 45%, var(--bg-2) 100%),
+        repeating-linear-gradient(135deg, rgba(15, 107, 92, 0.03), rgba(15, 107, 92, 0.03) 2px, transparent 2px, transparent 6px);
+      min-height: 100vh;
+    }
+    main { max-width: 1120px; margin: 0 auto; padding: 36px 24px 64px; }
+    .hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+    .eyebrow { text-transform: uppercase; letter-spacing: 0.28em; font-size: 12px; color: var(--muted); }
+    h1 { font-family: 'Fraunces', serif; font-size: 40px; margin: 8px 0 6px; }
+    .subtitle { color: var(--muted); margin: 0; font-size: 15px; }
+    .pill {
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      padding: 10px 16px;
+      display: inline-flex;
+      flex-direction: column;
+      gap: 2px;
+      box-shadow: var(--shadow);
+    }
+    .pill-label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+    .pill-value { font-size: 14px; font-weight: 600; color: var(--ink); }
+    .divider { height: 1px; background: var(--stroke); margin: 20px 0 24px; }
+    .grid { display: grid; gap: 18px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 18px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+      animation: fade-up 0.6s ease both;
+      animation-delay: var(--delay, 0ms);
+    }
+    .panel::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      opacity: 0.8;
+    }
+    .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    h2 { margin: 0; font-size: 18px; }
+    h3 { margin: 0 0 10px 0; font-size: 16px; }
+    .tag { background: #f1ede7; color: var(--muted); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+    .kv { display: grid; gap: 8px; }
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: #faf6f0;
+      border: 1px solid #efe6db;
+      font-size: 13px;
+    }
+    .kv-row span:first-child { color: var(--muted); font-weight: 600; }
+    .kv-row span:last-child { text-align: right; font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th {
+      text-align: left;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--stroke);
+    }
+    td { padding: 10px; border-bottom: 1px solid #f0e6db; }
+    tr:nth-child(even) td { background: #fbf8f3; }
+    .empty { border: 1px dashed #e6dbcf; border-radius: 12px; padding: 12px; color: var(--muted); background: #faf6f0; font-size: 13px; }
+    .empty-cell { text-align: center; color: var(--muted); padding: 16px; }
+    .leads-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .lead-card {
+      border: 1px solid #eadfd2;
+      border-radius: 14px;
+      padding: 14px;
+      background: linear-gradient(140deg, #fff8ef, #fefcf9);
+      box-shadow: 0 12px 24px rgba(22, 25, 28, 0.08);
+    }
+    .bullets { margin: 0; padding-left: 18px; color: var(--muted); }
+    .bullets li { margin-bottom: 6px; }
+    .code-block { margin-top: 10px; }
+    details summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+    pre {
+      margin: 12px 0 0;
+      padding: 12px;
+      border-radius: 12px;
+      background: #f7f2eb;
+      border: 1px solid #e6dbcf;
+      overflow: auto;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 720px) {
+      h1 { font-size: 30px; }
+      .pill { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .panel { animation: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>SignalSmith — Public Dashboard</h1>
-  <div class="muted">Updated (UTC): 2026-02-05T11:20:04Z</div>
+  <main>
+    <header class="hero">
+      <div>
+        <div class="eyebrow">SignalSmith</div>
+        <h1>Public Dashboard</h1>
+        <p class="subtitle">Execution, portfolio, and pipeline snapshot.</p>
+      </div>
+      <div class="pill">
+        <span class="pill-label">Updated (UTC)</span>
+        <span class="pill-value">2026-02-05T11:20:04Z</span>
+      </div>
+    </header>
 
-  <div class="card">
-    <h2>Next runs</h2>
-    <pre>{
-  "rss_ingest_next_utc": "2026-02-05T12:05:00Z",
-  "approval_sweep_next_utc": "2026-02-05T11:30:00Z",
-  "swing_preopen_time": "08:30 America/New_York",
-  "swing_postclose_time": "16:45 America/New_York"
-}</pre>
-  </div>
+    <div class="divider"></div>
 
-  <div class="card">
-    <h2>Equity (swing)</h2>
-    <pre>null</pre>
-  </div>
+    <section class="grid two">
+      <article class="panel" style="--delay: 60ms;">
+        <div class="panel-header">
+          <h2>Next runs</h2>
+        </div>
+        <div class="kv"><div class="kv-row"><span>rss_ingest_next_utc</span><span>2026-02-05T12:05:00Z</span></div><div class="kv-row"><span>approval_sweep_next_utc</span><span>2026-02-05T11:30:00Z</span></div><div class="kv-row"><span>swing_preopen_time</span><span>08:30 America/New_York</span></div><div class="kv-row"><span>swing_postclose_time</span><span>16:45 America/New_York</span></div></div>
+      </article>
 
-  <div class="card">
-    <h2>Positions (swing)</h2>
-    <table>
-      <thead><tr><th>Ticker</th><th>Qty</th><th>Avg cost</th><th>Market value</th><th>Entry date</th></tr></thead>
-      <tbody>
-        
-      </tbody>
-    </table>
-  </div>
+      <article class="panel" style="--delay: 120ms;">
+        <div class="panel-header">
+          <h2>Equity (swing)</h2>
+        </div>
+        <div class="empty">No data available.</div>
+      </article>
+    </section>
 
-  <div class="card">
-    <h2>Leads</h2>
-    <h3></h3><pre>Ticker / Company
-Theme (narrative bucket)
-Catalyst(s) + dates
-SEC / dilution radar notes (S-1/S-3/424B5/FWP; ATM/registered direct/warrants/resale)
-Yahoo fundamentals snapshot (mkt cap, PE, PS, PB, EV/EBITDA, shares/float)
-Status (watch / research / avoid / triggered)
-Next check</pre><h3>(seed) IVDA — Iveda Solutions, Inc.</h3><pre>Theme: small-cap security/AI surveillance (needs further validation)
-Dilution radar: S-1/A flagged (ATM + Registered Direct + Warrants + Resale/Selling SH)
-Next check: pull stated $ raise size / key terms; compare to market cap + recent price action</pre><h3>(seed) Picard Medical, Inc.</h3><pre>Theme: medtech (needs further validation)
-Dilution radar: S-1/A flagged (Warrants + Resale/Selling SH)
-Next check: confirm whether this is primarily a resale vs new issuance; parse headline offering amounts vs boilerplate</pre>
-  </div>
+    <section class="panel" style="--delay: 180ms;">
+      <div class="panel-header">
+        <h2>Positions (swing)</h2>
+        <span class="tag">0 open</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Qty</th>
+              <th>Avg cost</th>
+              <th>Market value</th>
+              <th>Entry date</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td class="empty-cell" colspan="5">No positions.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <div class="card">
-    <h2>Raw snapshot</h2>
-    <details><summary>dashboard.json</summary><pre>{
+    <section class="panel" style="--delay: 240ms;">
+      <div class="panel-header">
+        <h2>Leads</h2>
+        <span class="tag">3 items</span>
+      </div>
+      <div class="leads-grid">
+        <article class="lead-card"><h3>Lead template</h3><ul class="bullets"><li>Ticker / Company</li><li>Theme (narrative bucket)</li><li>Catalyst(s) + dates</li><li>SEC / dilution radar notes (S-1/S-3/424B5/FWP; ATM/registered direct/warrants/resale)</li><li>Yahoo fundamentals snapshot (mkt cap, PE, PS, PB, EV/EBITDA, shares/float)</li><li>Status (watch / research / avoid / triggered)</li><li>Next check</li></ul></article><article class="lead-card"><h3>(seed) IVDA — Iveda Solutions, Inc.</h3><ul class="bullets"><li>Theme: small-cap security/AI surveillance (needs further validation)</li><li>Dilution radar: S-1/A flagged (ATM + Registered Direct + Warrants + Resale/Selling SH)</li><li>Next check: pull stated $ raise size / key terms; compare to market cap + recent price action</li></ul></article><article class="lead-card"><h3>(seed) Picard Medical, Inc.</h3><ul class="bullets"><li>Theme: medtech (needs further validation)</li><li>Dilution radar: S-1/A flagged (Warrants + Resale/Selling SH)</li><li>Next check: confirm whether this is primarily a resale vs new issuance; parse headline offering amounts vs boilerplate</li></ul></article>
+      </div>
+    </section>
+
+    <section class="panel" style="--delay: 300ms;">
+      <div class="panel-header">
+        <h2>Raw snapshot</h2>
+        <span class="tag">dashboard.json</span>
+      </div>
+      <details class="code-block">
+        <summary>View JSON</summary>
+        <pre>{
   "generated_at_utc": "2026-02-05T11:20:04Z",
   "equity": null,
   "positions": [],
@@ -83,7 +227,9 @@ Next check: confirm whether this is primarily a resale vs new issuance; parse he
     "swing_preopen_time": "08:30 America/New_York",
     "swing_postclose_time": "16:45 America/New_York"
   }
-}</pre></details>
-  </div>
+}</pre>
+      </details>
+    </section>
+  </main>
 </body>
 </html>
