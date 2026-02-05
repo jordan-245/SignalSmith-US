@@ -1,0 +1,24 @@
+{
+  "generated_at_utc": "2026-02-05T11:38:26Z",
+  "equity": null,
+  "positions": [],
+  "leads": [
+    {
+      "bullets": "Ticker / Company\nTheme (narrative bucket)\nCatalyst(s) + dates\nSEC / dilution radar notes (S-1/S-3/424B5/FWP; ATM/registered direct/warrants/resale)\nYahoo fundamentals snapshot (mkt cap, PE, PS, PB, EV/EBITDA, shares/float)\nStatus (watch / research / avoid / triggered)\nNext check\n"
+    },
+    {
+      "title": "(seed) IVDA \u2014 Iveda Solutions, Inc.",
+      "bullets": "Theme: small-cap security/AI surveillance (needs further validation)\nDilution radar: S-1/A flagged (ATM + Registered Direct + Warrants + Resale/Selling SH)\nNext check: pull stated $ raise size / key terms; compare to market cap + recent price action\n"
+    },
+    {
+      "title": "(seed) Picard Medical, Inc.",
+      "bullets": "Theme: medtech (needs further validation)\nDilution radar: S-1/A flagged (Warrants + Resale/Selling SH)\nNext check: confirm whether this is primarily a resale vs new issuance; parse headline offering amounts vs boilerplate\n"
+    }
+  ],
+  "next_runs": {
+    "rss_ingest_next_utc": "2026-02-05T12:05:00Z",
+    "approval_sweep_next_utc": "2026-02-05T11:30:00Z",
+    "swing_preopen_time": "08:30 America/New_York",
+    "swing_postclose_time": "16:45 America/New_York"
+  }
+}
