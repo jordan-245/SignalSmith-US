@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -193,12 +194,71 @@ def read_todos() -> str:
     return p.read_text(encoding="utf-8")
 
 
+def read_lead_pipeline() -> str:
+    p = REPO / "docs" / "LEAD_PIPELINE.md"
+    if not p.exists():
+        return ""
+    return p.read_text(encoding="utf-8")
+
+
+def parse_kanban(md: str) -> Dict[str, list[dict]]:
+    """Parse docs/LEAD_PIPELINE.md into columns of cards."""
+    cols = {"TODO": [], "IN_PROGRESS": [], "READY": [], "ARCHIVED": []}
+    cur_col: str | None = None
+    cur_card: dict | None = None
+    for line in (md or "").splitlines():
+        line = line.rstrip()
+        m = re.match(r"^##\s+(TODO|IN_PROGRESS|READY|ARCHIVED)\s*$", line)
+        if m:
+            if cur_card and cur_col:
+                cols[cur_col].append(cur_card)
+            cur_col = m.group(1)
+            cur_card = None
+            continue
+        if not cur_col:
+            continue
+        if line.startswith("- "):
+            if cur_card:
+                cols[cur_col].append(cur_card)
+            title = line[2:].strip()
+            cur_card = {"title": title, "bullets": []}
+            continue
+        if line.strip().startswith("-") and cur_card is not None:
+            # indented bullet
+            cur_card["bullets"].append(line.strip().lstrip("-").strip())
+            continue
+        if line.strip() and cur_card is not None:
+            # free text line under card
+            cur_card["bullets"].append(line.strip())
+
+    if cur_card and cur_col:
+        cols[cur_col].append(cur_card)
+    return cols
+
+
 def main() -> None:
     load_env()
 
     st.set_page_config(page_title="SignalSmith Dashboard", layout="wide")
     st.title("SignalSmith — Swing Dashboard")
     st.caption("Swing book only. Data refreshes automatically.")
+
+    st.markdown(
+        """
+        <style>
+          /* Darker app background */
+          .stApp { background: #0b0f14; color: #e6edf3; }
+          h1,h2,h3,h4 { color: #e6edf3; }
+          .block-container { padding-top: 1.2rem; }
+          /* Cards */
+          .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+          .card h4 { margin: 0 0 6px 0; font-size: 0.95rem; }
+          .muted { color: rgba(230,237,243,0.7); font-size: 0.85rem; }
+          .pill { display:inline-block; padding: 2px 10px; border-radius: 999px; background: rgba(34,211,238,0.12); border: 1px solid rgba(34,211,238,0.22); color: #bfeef7; font-size: 12px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # We only support the swing portfolio going forward.
     portfolio_id = "swing"
@@ -208,7 +268,7 @@ def main() -> None:
         days = st.selectbox("Equity window", options=[30, 90, 180, 365, 730], index=1)
         st.caption("All panels are Swing book only.")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Equity curve", "Positions", "Orders & Fills", "Runs & Todos"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Equity curve", "Lead pipeline", "Positions", "Ops"])
 
     with tab1:
         eq = latest_equity(portfolio_id)
@@ -281,6 +341,61 @@ def main() -> None:
                 st.dataframe(df2.tail(50), use_container_width=True, hide_index=True)
 
     with tab3:
+        md = read_lead_pipeline()
+        if not md.strip():
+            st.info("No lead pipeline file yet: docs/LEAD_PIPELINE.md")
+        else:
+            cols = parse_kanban(md)
+
+            left, right = st.columns([1.4, 1.0])
+            with right:
+                # Big hero chart: equity curve
+                df = equity_curve(portfolio_id, days=days)
+                if df.empty:
+                    st.info("No equity curve yet.")
+                else:
+                    df = df.sort_values("date")
+                    peak = df["equity"].cummax()
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=df["date"], y=df["equity"], mode="lines", name="Equity"))
+                    fig.add_trace(go.Scatter(x=df["date"], y=peak, mode="lines", name="Peak", line=dict(dash="dot")))
+                    fig.update_layout(
+                        title="Equity (hero)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#e6edf3"),
+                        margin=dict(l=10, r=10, t=50, b=10),
+                        height=520,
+                        hovermode="x unified",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+            with left:
+                st.subheader("Lead pipeline")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.markdown(f"<span class='pill'>TODO {len(cols['TODO'])}</span>", unsafe_allow_html=True)
+                c2.markdown(f"<span class='pill'>IN PROGRESS {len(cols['IN_PROGRESS'])}</span>", unsafe_allow_html=True)
+                c3.markdown(f"<span class='pill'>READY {len(cols['READY'])}</span>", unsafe_allow_html=True)
+                c4.markdown(f"<span class='pill'>ARCHIVED {len(cols['ARCHIVED'])}</span>", unsafe_allow_html=True)
+
+                k1, k2, k3, k4 = st.columns(4)
+                for col_name, col in zip(["TODO", "IN_PROGRESS", "READY", "ARCHIVED"], [k1, k2, k3, k4]):
+                    with col:
+                        st.markdown(f"### {col_name.replace('_',' ')}")
+                        if not cols[col_name]:
+                            st.markdown("<div class='muted'>Empty</div>", unsafe_allow_html=True)
+                        for card in cols[col_name]:
+                            bullets = card.get("bullets") or []
+                            b_html = "".join([f"<div class='muted'>• {b}</div>" for b in bullets[:4]])
+                            st.markdown(
+                                f"<div class='card'><h4>{card.get('title','')}</h4>{b_html}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                with st.expander("Edit pipeline file"):
+                    st.code(md, language="markdown")
+
+    with tab4:
         df_pos = latest_positions(portfolio_id)
         if df_pos.empty:
             st.info("No positions yet.")
@@ -288,24 +403,13 @@ def main() -> None:
             st.subheader("Positions")
             st.dataframe(df_pos, use_container_width=True, hide_index=True)
 
-    with tab4:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Recent orders")
-            st.dataframe(recent_orders(portfolio_id), use_container_width=True, hide_index=True)
-        with c2:
-            st.subheader("Recent fills")
-            st.dataframe(recent_fills(), use_container_width=True, hide_index=True)
-
     with tab5:
-        st.subheader("Pipeline runs")
+        st.subheader("Ops")
+        st.markdown("### Runs")
         df_runs = pipeline_runs()
-        if df_runs.empty:
-            st.info("No pipeline runs found (or table not present).")
-        else:
-            st.dataframe(df_runs, use_container_width=True, hide_index=True)
-
-        st.subheader("To-dos")
+        if not df_runs.empty:
+            st.dataframe(df_runs.head(50), use_container_width=True, hide_index=True)
+        st.markdown("### To-dos")
         st.markdown(read_todos())
 
 
