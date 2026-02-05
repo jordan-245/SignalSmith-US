@@ -24,7 +24,9 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 
-USER_AGENT = "signalsmith-doc-ingest/0.1 (+https://srv1281557.hstgr.cloud)"
+# User-Agent must be explicit enough for SEC Fair Access guidance.
+# Keep it stable and identifiable.
+USER_AGENT = "SignalSmith/0.1 (doc-ingest; +https://srv1281557.hstgr.cloud; research bot)"
 META_PUBLISHED_KEYS = [
     "article:published_time",
     "article:modified_time",
@@ -80,11 +82,37 @@ def gather_urls(args: argparse.Namespace) -> List[str]:
     return uniq[: args.max_docs]
 
 
+# Conservative per-host throttling to stay scraper-friendly (esp. SEC).
+# Single-process, so a simple in-memory timestamp map is enough.
+_LAST_REQ_AT: Dict[str, float] = {}
+
+
+def _min_interval_for_host(host: str) -> float:
+    host = (host or "").lower()
+    if host.endswith("sec.gov"):
+        return 0.75  # ~1.3 rps; stay well under SEC guidance + reduce blocking risk
+    return 0.0
+
+
+def _throttle(url: str) -> None:
+    host = urlparse(url).netloc.lower()
+    interval = _min_interval_for_host(host)
+    if interval <= 0:
+        return
+    now = time.time()
+    last = _LAST_REQ_AT.get(host, 0.0)
+    sleep_for = interval - (now - last)
+    if sleep_for > 0:
+        time.sleep(sleep_for)
+    _LAST_REQ_AT[host] = time.time()
+
+
 def fetch_url_with_retry(url: str, timeout: int, retries: int = 2, backoff: float = 2.0) -> Tuple[bytes, Dict[str, str]]:
     headers = {"User-Agent": USER_AGENT}
     last_exc: Exception | None = None
     for attempt in range(1, retries + 2):
         try:
+            _throttle(url)
             resp = requests.get(url, headers=headers, timeout=timeout)
             if resp.status_code in (429,) or resp.status_code >= 500:
                 raise requests.HTTPError(f"{resp.status_code} {resp.text}", response=resp)

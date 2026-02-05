@@ -10,3 +10,21 @@ Format:
 
 ---
 - 2026-02-04T13:49:51+00:00 | ingest_rss | ok | feeds=10 urls=1 failures=0 rc=0
+- 2026-02-05T03:32:22+00:00 | ingest_rss | ok | feeds=17 urls=5 failures=0 rc=0
+- 2026-02-05T03:38:47+00:00 | ingest_rss | ok | feeds=22 urls=5 failures=8 rc=0
+- 2026-02-05T03:40:27+00:00 | ingest_rss | ok | feeds=13 urls=5 failures=0 rc=0
+- 2026-02-05T04:05:46+00:00 | ingest_rss | ok | feeds=13 urls=80 failures=0 rc=0
+- 2026-02-05T04:11:59+00:00 | ingest_rss | ok | feeds=13 urls=50 failures=0 rc=0
+- 2026-02-05T05:05:36+00:00 | ingest_rss | ok | feeds=13 urls=80 failures=0 rc=0
+- 2026-02-05T05:59:06+00:00 | ingest_rss | ok | feeds=13 urls=80 failures=0 rc=0
+- 2026-02-05T06:05:35+00:00 | ingest_rss | ok | feeds=13 urls=80 failures=0 rc=0
+- 2026-02-05T06:10:07+00:00 | ingest_rss | ok | feeds=50 urls=80 failures=3 rc=0
+- 2026-02-05T06:17:39+00:00 | ingest_rss | ok | feeds=50 urls=30 failures=3 rc=0
+- 2026-02-05T06:19:45+00:00 | ingest_rss | ok | feeds=48 urls=20 failures=1 rc=0
+- 2026-02-05T06:21:39+00:00 | ingest_rss | ok | feeds=47 urls=20 failures=1 rc=0
+- 2026-02-05T06:22:55+00:00 | ingest_rss | ok | feeds=47 urls=20 failures=0 rc=0
+- 2026-02-05T07:05:41+00:00 | ingest_rss | ok | feeds=47 urls=80 failures=0 rc=0
+- 2026-02-05T07:06:57+00:00 | ingest_rss | ok | feeds=47 urls=80 failures=0 rc=0
+- 2026-02-05T08:06:51+00:00 | ingest_rss | ok | feeds=47 urls=80 failures=0 rc=0
+- 2026-02-05T09:06:54+00:00 | ingest_rss | ok | feeds=47 urls=80 failures=0 rc=0
+- 2026-02-05T10:06:50+00:00 | ingest_rss | ok | feeds=47 urls=80 failures=0 rc=0

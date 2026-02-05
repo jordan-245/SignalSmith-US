@@ -1,47 +1,112 @@
 # RSS/Atom sources (one per line)
-# Keep this allowlist small and high-signal.
-# Note: many major publishers block scraping full articles (401/403).
+# Goal: broad, scraper-friendly coverage for small-cap catalysts (US + Canada + Australia).
+# Notes:
+# - Some sources will be noisy (esp. PR wires) — we’ll control noise downstream with filters.
+# - SEC feeds are high-signal but may rate-limit/block if UA/traffic looks automated.
 
-# --- Scrape-friendly (usually)
+# =========================
+# US — SEC / EDGAR (Atom)
+# =========================
+# Material events
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K%2FA&owner=include&count=100&output=atom
+
+# Registrations / offerings / dilution signals
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-1&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-3&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=424B5&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=424B3&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=FWP&owner=include&count=100&output=atom
+
+# Ownership / governance (less frequent, still high-signal)
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC%2013D&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=SC%2013G&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=DEF%2014A&owner=include&count=100&output=atom
+
+# Periodics (important but heavier volume)
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-Q&owner=include&count=100&output=atom
+https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-K&owner=include&count=100&output=atom
+
+# Legacy SEC accounting taxonomy RSS (keep)
 https://www.sec.gov/Archives/edgar/usgaap.rss.xml
+
+# =========================
+# US — Press releases / newswires
+# =========================
+# PR Newswire (broad + category feeds)
 https://www.prnewswire.com/rss/news-releases-list.rss
-# https://www.globenewswire.com/RssFeed/industry/All?format=xml  # 400 currently
+https://www.prnewswire.com/rss/health-latest-news/health-latest-news-list.rss
+https://www.prnewswire.com/rss/general-business-latest-news/general-business-latest-news-list.rss
+https://www.prnewswire.com/rss/energy-latest-news/energy-latest-news-list.rss
+https://www.prnewswire.com/rss/consumer-technology-latest-news/consumer-technology-latest-news-list.rss
+https://www.prnewswire.com/rss/policy-public-interest-latest-news/policy-public-interest-latest-news-list.rss
+https://www.prnewswire.com/rss/financial-services-investing-latest-news/financial-services-investing-latest-news-list.rss
+
+# =========================
+# US — Biotech / healthcare editorial (higher-signal)
+# =========================
+https://www.biopharmadive.com/feeds/news/
+
+# Optional (may intermittently block/bot-detect)
+# https://www.fiercebiotech.com/rss/xml
+# https://www.fiercepharma.com/rss/xml
+# https://www.genomeweb.com/rss.xml
+
+# =========================
+# US — Regulators / government (credible, often market-moving)
+# =========================
+# FDA (topic RSS)
+https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/press-releases/rss.xml
+https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/drugs/rss.xml
+https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/medwatch/rss.xml
+https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/disco/rss.xml
+https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/drug-safety-podcast/rss.xml
+# https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/food-safety-recalls/rss.xml
+
+# Federal Register (agency Atom)
+https://www.federalregister.gov/agencies/securities-and-exchange-commission.atom
+https://www.federalregister.gov/agencies/food-and-drug-administration.atom
+https://www.federalregister.gov/agencies/centers-for-medicare-medicaid-services.atom
+https://www.federalregister.gov/agencies/department-of-health-and-human-services.atom
+
+# NIH news releases
+# https://www.nih.gov/news-events/news-releases/rss.xml  # 404 currently
+
+# =========================
+# Canada
+# =========================
+# Montréal Exchange (TMX) — official feeds
+http://feeds.feedburner.com/MxCirculars
+http://feeds.feedburner.com/MxPressReleases
+
+# Canada Newswire (CNW)
+https://cnw.en.mediaroom.com/investor-relations?pagetemplate=rss
+
+# Financial Post (general Canada business/markets)
+https://financialpost.com/feed
+
+# =========================
+# Australia
+# =========================
+# ASX announcements (3rd-party syndicator; very scraper-friendly)
+http://finance.mooh.org/rss.php
+
+# AU small-cap news sites (WordPress RSS)
+https://smallcaps.com.au/feed/
+https://stockhead.com.au/feed/
+https://themarketonline.com.au/feed/
+
+# =========================
+# Existing macro/sector sources (keep light)
+# =========================
 https://www.eia.gov/rss/todayinenergy.xml
 https://oilprice.com/rss/main
-# https://www.fxstreet.com/rss/commodities  # 404 currently
-# https://www.fxstreet.com/rss/news         # 404 currently
 https://www.investing.com/rss/news_25.rss
 https://www.investing.com/rss/news_95.rss
 https://www.investing.com/rss/news_301.rss
-
-# --- Macro / policy (usually scrape-friendly)
 https://www.federalreserve.gov/feeds/press_all.xml
-# https://home.treasury.gov/feeds/press.xml  # 404 currently
-# https://www.whitehouse.gov/briefing-room/feed/  # 404 currently
-
-# --- Markets / economy (varies; keep light)
-# https://www.bea.gov/rss.xml  # 404 currently
 https://www.bls.gov/feed/bls_latest.rss
-
-# --- High-signal company/IR aggregations
-https://www.nasdaq.com/feed/rssoutbound?category=Earnings
-https://www.nasdaq.com/feed/rssoutbound?category=Stocks
-
-# --- Sector-specific (US): high-signal policy/regulatory + industry news
-# Tech / cyber
-# https://www.cisa.gov/cybersecurity-advisories/all.xml  # 403 currently
-
-# Healthcare / pharma
-# https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/fda-news-releases/rss.xml  # 404 currently
-
-# Financials / banking regulation
-# https://www.fdic.gov/news/press-releases/index.xml  # 404 currently
+# https://www.nasdaq.com/feed/rssoutbound?category=Earnings  # frequently times out
+# https://www.nasdaq.com/feed/rssoutbound?category=Stocks    # frequently times out
 https://www.occ.gov/rss/rss-news-releases.xml
-
-# Energy / climate
 https://www.energy.gov/rss.xml
-
-# --- Likely blocked / headlines-only (disabled by default)
-# https://feeds.a.dj.com/rss/RSSMarketsMain.xml
-# https://www.marketwatch.com/rss/topstories
-# https://www.cnbc.com/id/19854910/device/rss/rss.html

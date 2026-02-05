@@ -25,6 +25,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import List
+from urllib.parse import urlparse
 
 import feedparser
 import requests
@@ -73,20 +74,45 @@ def discover_urls(feed_url: str, timeout: int) -> List[str]:
 
     feedparser's built-in URL fetching can hang depending on the environment;
     we fetch with requests (timeout) then parse the content.
-    """
-    ua = {"User-Agent": "signalsmith-rss/0.1"}
-    resp = requests.get(feed_url, headers=ua, timeout=timeout)
-    resp.raise_for_status()
-    parsed = feedparser.parse(resp.content)
 
-    urls: List[str] = []
-    for e in parsed.entries or []:
-        link = getattr(e, "link", None) or None
-        if not link:
-            continue
-        if link not in urls:
-            urls.append(link)
-    return urls
+    Includes light retries for flaky endpoints (e.g., Nasdaq).
+    """
+
+    def _timeout_for(url: str) -> int:
+        host = urlparse(url).netloc.lower()
+        if host.endswith("nasdaq.com"):
+            return max(timeout, 30)
+        if host.endswith("sec.gov"):
+            return max(timeout, 30)
+        return timeout
+
+    ua = {"User-Agent": "SignalSmith/0.1 (rss-discovery; +https://srv1281557.hstgr.cloud; research bot)"}
+
+    last_exc: Exception | None = None
+    for attempt in range(1, 3 + 1):
+        try:
+            t = _timeout_for(feed_url)
+            resp = requests.get(feed_url, headers=ua, timeout=t)
+            resp.raise_for_status()
+            parsed = feedparser.parse(resp.content)
+
+            urls: List[str] = []
+            for e in parsed.entries or []:
+                link = getattr(e, "link", None) or None
+                if not link:
+                    continue
+                if link not in urls:
+                    urls.append(link)
+            return urls
+        except Exception as exc:
+            last_exc = exc
+            # simple backoff
+            if attempt < 3:
+                import time
+
+                time.sleep(1.5 * attempt)
+
+    raise last_exc or RuntimeError("Failed to fetch feed")
 
 
 def main() -> None:

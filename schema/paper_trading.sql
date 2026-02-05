@@ -16,6 +16,7 @@ create table if not exists paper_orders (
   target_weight double precision,
   qty_estimate double precision,
   status text,
+  rules_json jsonb,
   created_at timestamptz not null default now()
 );
 

@@ -55,7 +55,12 @@ SLIPPAGE_BPS = 5
 # Risk model (ATR-based stops + risk-based sizing)
 ATR_DAYS = 14
 ATR_STOP_MULT = 2.0
-RISK_PER_TRADE_PCT = 0.01  # 1% equity risked per trade
+
+# Risk per position (equity-at-risk at stop). Baseline per Jordan: 5%, adjustable.
+RISK_PER_TRADE_BASE_PCT = float(os.getenv("SWING_RISK_PER_TRADE_BASE_PCT", "0.05"))
+RISK_PER_TRADE_MIN_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MIN_PCT", "0.02"))
+RISK_PER_TRADE_MAX_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MAX_PCT", "0.08"))
+
 MAX_EQUITY_PER_NAME = 0.10  # hard cap on notional exposure per name
 
 # Time stop: exit if a position hasn't made meaningful progress after N business days.
@@ -884,8 +889,35 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     catalyst_budget_total = CATALYST_MAX_EQUITY_TOTAL * equity_now
     catalyst_budget_name = CATALYST_MAX_EQUITY_PER_NAME * equity_now
 
-    risk_budget = RISK_PER_TRADE_PCT * equity_now
     max_notional = MAX_EQUITY_PER_NAME * equity_now
+
+    def risk_pct_for_trade(source: str, rank_idx: int, rank_total: int, fill_price: float, atr: float) -> float:
+        """Adjust risk-per-trade based on confidence + risk.
+
+        - catalyst trades start more conservative.
+        - top-ranked names can get a small bump.
+        - very high ATR% names get reduced risk.
+        """
+        pct = float(RISK_PER_TRADE_BASE_PCT)
+        if source == "catalyst":
+            pct = min(pct, 0.03)
+
+        # confidence proxy: position in ranked list
+        if rank_total > 0:
+            frac = rank_idx / max(1, rank_total - 1)
+            if frac <= 0.15:
+                pct += 0.01
+            elif frac >= 0.70:
+                pct -= 0.02
+
+        # risk proxy: ATR stop distance as % of price
+        atr_pct = (ATR_STOP_MULT * atr) / max(0.01, fill_price)
+        if atr_pct >= 0.12:
+            pct -= 0.02
+        elif atr_pct >= 0.08:
+            pct -= 0.01
+
+        return float(min(RISK_PER_TRADE_MAX_PCT, max(RISK_PER_TRADE_MIN_PCT, pct)))
 
     slots = MAX_POSITIONS - len(held)
     catalyst_buys = catalyst_buys[: max(0, slots)]
@@ -922,6 +954,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
 
         cost_per_share = fill_price * (1 + FEES_BPS / 10_000.0)
 
+        risk_pct = risk_pct_for_trade("catalyst", catalyst_buys.index(t), max(1, len(catalyst_buys)), fill_price, atr)
+        risk_budget = risk_pct * equity_now
+
         shares_risk = math.floor(risk_budget / risk_per_share)
         shares_cap = math.floor(dollars_cap / cost_per_share)
 
@@ -950,10 +985,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     buys = entries[: max(0, slots)]
     if buys:
         equity_now = estimate_equity_now()
-        risk_budget = RISK_PER_TRADE_PCT * equity_now
         max_notional = MAX_EQUITY_PER_NAME * equity_now
 
-        for t in buys:
+        for i, t in enumerate(buys):
             row = ind[ind["ticker"] == t]
             if row.empty or row.iloc[0].get("atr14") is None or pd.isna(row.iloc[0].get("atr14")):
                 continue
@@ -966,6 +1000,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
 
             st = fill_price - ATR_STOP_MULT * atr
             risk_per_share = max(0.01, fill_price - st)
+
+            risk_pct = risk_pct_for_trade("regular", i, max(1, len(buys)), fill_price, atr)
+            risk_budget = risk_pct * equity_now
 
             # Shares by risk
             shares_risk = math.floor(risk_budget / risk_per_share)
@@ -1001,6 +1038,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
                     "stop_price": round(st, 6),
                     "risk_per_share": round(risk_per_share, 6),
                     "risk_budget": round(risk_budget, 2),
+                    "risk_pct": round(risk_pct, 4),
                     "time_stop_days": TIME_STOP_DAYS,
                     "time_stop_progress_atr": TIME_STOP_PROGRESS_ATR,
                     "source": "regular",
@@ -1070,7 +1108,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         targets_line += ", " + ", ".join(top_targets[5:])
     summary_lines.append(f"- Targets: {targets_line}")
     summary_lines.append(
-        f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_PCT:.1%} · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
+        f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_BASE_PCT:.1%} (adj {RISK_PER_TRADE_MIN_PCT:.0%}-{RISK_PER_TRADE_MAX_PCT:.0%}) · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
     )
     summary_lines.append("")
 
