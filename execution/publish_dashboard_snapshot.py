@@ -337,8 +337,9 @@ def render_html(payload: Dict[str, Any]) -> str:
         <p class="subtitle">Execution, portfolio, and pipeline snapshot.</p>
       </div>
       <div class="pill">
-        <span class="pill-label">Updated (UTC)</span>
-        <span class="pill-value">{esc(payload.get('generated_at_utc',''))}</span>
+        <span class="pill-label">Updated (AEST)</span>
+        <span class="pill-value">{esc(payload.get('generated_at_aest',''))}</span>
+        <div class="muted" style="margin-top:6px; font-size:12px;">UTC: {esc(payload.get('generated_at_utc',''))}</div>
       </div>
     </header>
 
@@ -414,8 +415,19 @@ def main() -> None:
 
     now = dt.datetime.now(dt.timezone.utc)
 
+    # Show times in AEST/AEDT (Australia/Brisbane) for Jordan.
+    try:
+        from zoneinfo import ZoneInfo
+
+        aest = ZoneInfo("Australia/Brisbane")
+    except Exception:
+        aest = None
+
+    now_aest = now.astimezone(aest) if aest else now
+
     payload: Dict[str, Any] = {
         "generated_at_utc": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "generated_at_aest": now_aest.replace(microsecond=0).isoformat(),
         "equity": latest_equity("swing"),
         "positions": latest_positions("swing"),
         "leads": parse_leads(LEAD_BOOK.read_text(encoding="utf-8")) if LEAD_BOOK.exists() else [],
