@@ -33,6 +33,8 @@ import requests
 import yfinance as yf
 from dotenv import load_dotenv
 
+from journal import journal_run, journal_watch
+
 DEFAULT_PORTFOLIO_ID = "swing"
 DEFAULT_PORTFOLIO_NAME = "Swing Book"
 DEFAULT_CASH = 5_000.0
@@ -63,6 +65,8 @@ TIME_STOP_PROGRESS_ATR = float(os.getenv("SWING_TIME_STOP_PROGRESS_ATR", "0.5"))
 # Commodity proxies / related ETFs (starter set; editable)
 PROXIES = [
     "SPY",
+    "VOO",
+    "IVV",
     "GLD",
     "SLV",
     "GDX",
@@ -74,6 +78,30 @@ PROXIES = [
     "DBC",
     "DBA",
 ]
+
+# Sector ETF mapping for rotation context (Yahoo/yfinance sector strings).
+SECTOR_ETF = {
+    "Technology": "XLK",
+    "Financial Services": "XLF",
+    "Financial": "XLF",
+    "Healthcare": "XLV",
+    "Health Care": "XLV",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Consumer Staples": "XLP",
+    "Utilities": "XLU",
+    "Basic Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Communication Services": "XLC",
+}
+
+SECTOR_ETFS = sorted(set(SECTOR_ETF.values()))
+
+# Fundamental/liquidity guardrails (yfinance fast_info). Conservative defaults.
+MIN_MARKET_CAP = float(os.getenv("SWING_MIN_MARKET_CAP", "5000000000"))  # $5B
+MIN_AVG_VOLUME = float(os.getenv("SWING_MIN_AVG_VOLUME", "1000000"))     # 1M shares
 
 
 def load_env() -> None:
@@ -170,47 +198,77 @@ def fetch_prices_window(tickers: List[str], end_date: dt.date, lookback_days: in
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute basic indicators per ticker.
+    """Compute per-ticker indicators from daily OHLCV.
 
-    Indicators:
-    - SMA50, SMA200
-    - ret20, vol20
-    - RSI14
-    - ATR14 (true range rolling mean)
+    Keep this lightweight: only indicators we will actually use.
     """
     if df.empty:
         return df
+
     out_rows: List[Dict] = []
     for ticker, g in df.sort_values(["ticker", "date"]).groupby("ticker"):
-        s = g.set_index("date")["px"].astype(float).dropna()
+        g = g.set_index("date").sort_index()
+        s = g["px"].astype(float).dropna()
         if len(s) < 220:
             continue
+
+        high = g["high"].astype(float).reindex(s.index)
+        low = g["low"].astype(float).reindex(s.index)
+        vol = g.get("volume")
+        if vol is not None:
+            vol = vol.astype(float).reindex(s.index)
+
         rets = s.pct_change()
         sma50 = s.rolling(50).mean()
         sma200 = s.rolling(200).mean()
         ret20 = (s / s.shift(20) - 1.0)
+        ret60 = (s / s.shift(60) - 1.0)
         vol20 = rets.rolling(20).std()
 
-        # RSI14 (simple): average gains / losses
+        # RSI14
         delta = s.diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = (-delta.clip(upper=0)).rolling(14).mean()
         rs = gain / loss.replace(0, np.nan)
         rsi14 = 100 - (100 / (1 + rs))
 
-        # ATR14 from true range
-        gh = g.set_index("date")["high"].astype(float).reindex(s.index)
-        gl = g.set_index("date")["low"].astype(float).reindex(s.index)
+        # ATR14
         prev_close = s.shift(1)
         tr = pd.concat(
             [
-                (gh - gl).abs(),
-                (gh - prev_close).abs(),
-                (gl - prev_close).abs(),
+                (high - low).abs(),
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
             ],
             axis=1,
         ).max(axis=1)
         atr14 = tr.rolling(ATR_DAYS).mean()
+
+        # ADX(14) (trend strength)
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+        minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+        tr14 = tr.rolling(14).sum()
+        plus_di = 100 * (plus_dm.rolling(14).sum() / tr14.replace(0, np.nan))
+        minus_di = 100 * (minus_dm.rolling(14).sum() / tr14.replace(0, np.nan))
+        dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+        adx14 = dx.rolling(14).mean()
+
+        # Volume confirmation: 20d vs 60d average volume
+        vol_ratio = None
+        if vol is not None:
+            v20 = vol.rolling(20).mean()
+            v60 = vol.rolling(60).mean()
+            vr = v20 / v60.replace(0, np.nan)
+            vol_ratio = float(vr.iloc[-1]) if not pd.isna(vr.iloc[-1]) else None
+
+        # Overextension: distance from SMA200
+        dist_sma200 = float(s.iloc[-1] / sma200.iloc[-1] - 1.0) if not pd.isna(sma200.iloc[-1]) else None
+
+        # 52w high proximity
+        hi_52w = s.rolling(252).max()
+        near_52w = float(s.iloc[-1] / hi_52w.iloc[-1]) if not pd.isna(hi_52w.iloc[-1]) else None
 
         last_dt = s.index[-1]
         out_rows.append(
@@ -221,11 +279,17 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
                 "sma50": float(sma50.iloc[-1]),
                 "sma200": float(sma200.iloc[-1]),
                 "ret20": float(ret20.iloc[-1]),
+                "ret60": float(ret60.iloc[-1]) if not pd.isna(ret60.iloc[-1]) else None,
                 "vol20": float(vol20.iloc[-1]) if not pd.isna(vol20.iloc[-1]) else None,
                 "rsi14": float(rsi14.iloc[-1]) if not pd.isna(rsi14.iloc[-1]) else None,
                 "atr14": float(atr14.iloc[-1]) if not pd.isna(atr14.iloc[-1]) else None,
+                "adx14": float(adx14.iloc[-1]) if not pd.isna(adx14.iloc[-1]) else None,
+                "vol_ratio": vol_ratio,
+                "dist_sma200": dist_sma200,
+                "near_52w": near_52w,
             }
         )
+
     return pd.DataFrame(out_rows)
 
 
@@ -233,12 +297,30 @@ def rank_candidates(ind: pd.DataFrame) -> pd.DataFrame:
     if ind.empty:
         return ind
     df = ind.copy()
+
     # Trend filter: close > sma50 > sma200
     df = df[(df["close"] > df["sma50"]) & (df["sma50"] > df["sma200"])]
+
+    # Avoid extreme overextension (helps reduce buying blow-off tops)
+    if "dist_sma200" in df.columns:
+        df = df[(df["dist_sma200"].isna()) | (df["dist_sma200"] <= 0.35)]
+
     # RSI filter: avoid overbought extremes
-    df = df[(df["rsi14"].isna()) | ((df["rsi14"] >= 45) & (df["rsi14"] <= 72))]
-    # Score: momentum / vol
+    df = df[(df["rsi14"].isna()) | ((df["rsi14"] >= 45) & (df["rsi14"] <= 78))]
+
+    # ADX filter (prefer trending names)
+    if "adx14" in df.columns:
+        df = df[(df["adx14"].isna()) | (df["adx14"] >= 18)]
+
+    # Base score: momentum / vol (risk-adjusted)
     df["score"] = df["ret20"] / (df["vol20"].replace(0, np.nan))
+
+    # Boost: near highs + volume confirmation (small weights)
+    if "near_52w" in df.columns:
+        df["score"] = df["score"] + 0.25 * (df["near_52w"].fillna(0.0) - 0.9)
+    if "vol_ratio" in df.columns:
+        df["score"] = df["score"] + 0.10 * (df["vol_ratio"].fillna(1.0) - 1.0)
+
     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["score"])
     df = df.sort_values("score", ascending=False)
     return df
@@ -538,20 +620,19 @@ def research_likely_good(ticker: str, trade_date: dt.date) -> Tuple[bool, str]:
     return False, f"insufficient positive signal (pos={pos}, neg={neg})"
 
 
-def market_note(ind: pd.DataFrame) -> str:
-    """Very lightweight regime note from a broad US index proxy.
-
-    Prefers SPY, but falls back to VOO/IVV if SPY is missing.
-    """
+def market_note(ind: pd.DataFrame) -> Tuple[str, str]:
+    """Return (regime_label, detail) from a broad US index proxy."""
     for sym in ("SPY", "VOO", "IVV"):
         df = ind[ind["ticker"] == sym]
         if df.empty:
             continue
         r20 = float(df.iloc[0]["ret20"])
         vol = float(df.iloc[0]["vol20"] or 0.0)
-        trend = "up" if (df.iloc[0]["close"] > df.iloc[0]["sma50"] > df.iloc[0]["sma200"]) else "not-up"
-        return f"Regime: {sym} 20d={r20:+.1%}, vol20={vol:.2%}, trend={trend}."
-    return "Regime: unknown (missing index proxy)."
+        risk_on = bool(df.iloc[0]["close"] > df.iloc[0]["sma200"])
+        label = "risk-on" if risk_on else "risk-off"
+        detail = f"{sym} 20d={r20:+.1%} · vol20={vol:.2%} · close>{'SMA200' if risk_on else 'SMA200? no'}"
+        return label, detail
+    return "unknown", "missing index proxy"
 
 
 def run(trade_date: dt.date, mode: str = "pre") -> None:
@@ -563,11 +644,66 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     ensure_portfolio(DEFAULT_PORTFOLIO_ID, DEFAULT_PORTFOLIO_NAME, DEFAULT_CASH)
 
     universe = load_universe()
-    px = fetch_prices_window(universe, trade_date, lookback_days=260)
+
+    # Include sector ETFs so we can compute rotation/leadership context.
+    px = fetch_prices_window(universe + SECTOR_ETFS, trade_date, lookback_days=260)
     ind = compute_indicators(px)
+
     ranked = rank_candidates(ind)
 
-    note = market_note(ind)
+    regime_label, regime_detail = market_note(ind)
+
+    leaders: List[Tuple[str, float]] = []
+    leaders_str = "(n/a)"
+    leaders_map: Dict[str, float] = {}
+    try:
+        from sector_regime import sector_leaders
+
+        leaders = sector_leaders(ind, SECTOR_ETFS)[:5]
+        leaders_str = ", ".join([f"{etf}({rs:+.1%})" for etf, rs in leaders[:3]]) if leaders else "(n/a)"
+        leaders_map = {etf: rs for etf, rs in leaders}
+    except Exception:
+        pass
+
+    # Enrich top candidates with sector + basic fundamentals via yfinance (best-effort, cached).
+    try:
+        from yf_meta import get_meta
+
+        cand = ranked.head(200).copy()
+        sectors = []
+        mcaps = []
+        avgs = []
+        sector_etfs = []
+        sector_rs = []
+        for t in cand["ticker"].tolist():
+            meta = get_meta(t) or {}
+            sector = meta.get("sector")
+            mcap = meta.get("market_cap")
+            avg_vol = meta.get("three_month_average_volume") or meta.get("ten_day_average_volume")
+            etf = SECTOR_ETF.get(str(sector), None) if sector else None
+            rs = float(leaders_map.get(etf, 0.0)) if etf else 0.0
+            sectors.append(sector)
+            mcaps.append(mcap)
+            avgs.append(avg_vol)
+            sector_etfs.append(etf)
+            sector_rs.append(rs)
+
+        cand["sector"] = sectors
+        cand["market_cap"] = mcaps
+        cand["avg_volume"] = avgs
+        cand["sector_etf"] = sector_etfs
+        cand["sector_rs"] = sector_rs
+
+        # Fundamental guardrails
+        cand = cand[(cand["market_cap"].isna()) | (cand["market_cap"].astype(float) >= MIN_MARKET_CAP)]
+        cand = cand[(cand["avg_volume"].isna()) | (cand["avg_volume"].astype(float) >= MIN_AVG_VOLUME)]
+
+        # Sector leadership boost (small)
+        cand["score"] = cand["score"] + 0.20 * cand["sector_rs"].fillna(0.0)
+
+        ranked = cand.sort_values("score", ascending=False)
+    except Exception:
+        pass
 
     if ranked.empty:
         send_telegram(f"[swing] {trade_date.isoformat()} no candidates. {note}")
@@ -888,9 +1024,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     # Friendlier Telegram summary (first line becomes bold via telegram_fmt)
     summary_lines = [
         f"Swing — {trade_date.isoformat()}",
+        f"- Regime: {regime_label} ({regime_detail})",
+        f"- Sector leaders: {leaders_str}",
     ]
-    if note and "unknown" not in note.lower():
-        summary_lines.append(f"- {note}")
     top_targets = targets[:10]
     targets_line = ", ".join(top_targets[:5])
     if len(top_targets) > 5:
