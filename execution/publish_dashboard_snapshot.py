@@ -112,12 +112,32 @@ def parse_leads(md: str) -> List[Dict[str, str]]:
 
 
 def next_runs_hint(now_utc: dt.datetime) -> Dict[str, str]:
+    """Best-effort next-run times.
+
+    We present next-run timestamps in both UTC and AEST for convenience.
+    """
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        aest = ZoneInfo("Australia/Brisbane")
+    except Exception:
+        aest = None
+
+    def to_utc_z(t: dt.datetime) -> str:
+        return t.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def to_aest(t: dt.datetime) -> str:
+        if not aest:
+            return ""
+        return t.astimezone(aest).replace(microsecond=0).isoformat()
+
     # Hard-coded from our cron schedule:
     # - RSS ingest at minute 5 UTC
     # - approval sweep every 30m
     # - swing pre 08:30 ET; post 16:45 ET
     def next_at_minute(minute: int) -> dt.datetime:
-        t = now_utc.replace(second=0, microsecond=0)
+        t = now_utc.astimezone(dt.timezone.utc).replace(second=0, microsecond=0)
         cand = t.replace(minute=minute)
         if cand <= t:
             cand = cand + dt.timedelta(hours=1)
@@ -125,16 +145,21 @@ def next_runs_hint(now_utc: dt.datetime) -> Dict[str, str]:
         return cand
 
     def next_half_hour() -> dt.datetime:
-        t = now_utc.replace(second=0, microsecond=0)
+        t = now_utc.astimezone(dt.timezone.utc).replace(second=0, microsecond=0)
         m = 30 if t.minute < 30 else 0
         cand = t.replace(minute=m)
         if cand <= t:
             cand = cand + dt.timedelta(minutes=30)
         return cand
 
+    rss_next = next_at_minute(5)
+    appr_next = next_half_hour()
+
     return {
-        "rss_ingest_next_utc": next_at_minute(5).isoformat().replace("+00:00", "Z"),
-        "approval_sweep_next_utc": next_half_hour().isoformat().replace("+00:00", "Z"),
+        "rss_ingest_next_aest": to_aest(rss_next),
+        "rss_ingest_next_utc": to_utc_z(rss_next),
+        "approval_sweep_next_aest": to_aest(appr_next),
+        "approval_sweep_next_utc": to_utc_z(appr_next),
         "swing_preopen_time": "08:30 America/New_York",
         "swing_postclose_time": "16:45 America/New_York",
     }
@@ -335,6 +360,7 @@ def render_html(payload: Dict[str, Any]) -> str:
         <div class="eyebrow">SignalSmith</div>
         <h1>Public Dashboard</h1>
         <p class="subtitle">Execution, portfolio, and pipeline snapshot.</p>
+        <p class="subtitle">Chat: message me on Telegram (this page is static).</p>
       </div>
       <div class="pill">
         <span class="pill-label">Updated (AEST)</span>
