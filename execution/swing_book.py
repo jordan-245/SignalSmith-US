@@ -621,17 +621,52 @@ def research_likely_good(ticker: str, trade_date: dt.date) -> Tuple[bool, str]:
 
 
 def market_note(ind: pd.DataFrame) -> Tuple[str, str]:
-    """Return (regime_label, detail) from a broad US index proxy."""
-    for sym in ("SPY", "VOO", "IVV"):
-        df = ind[ind["ticker"] == sym]
-        if df.empty:
-            continue
-        r20 = float(df.iloc[0]["ret20"])
-        vol = float(df.iloc[0]["vol20"] or 0.0)
-        risk_on = bool(df.iloc[0]["close"] > df.iloc[0]["sma200"])
+    """Return (regime_label, detail) from a broad US index proxy.
+
+    Prefers Supabase prices; falls back to yfinance if proxies are missing.
+    """
+
+    def from_row(sym: str, row: pd.Series) -> Tuple[str, str]:
+        r20 = float(row.get("ret20") or 0.0)
+        vol = float(row.get("vol20") or 0.0)
+        sma200 = float(row.get("sma200") or 0.0)
+        close = float(row.get("close") or 0.0)
+        risk_on = bool(close > sma200) if sma200 else False
         label = "risk-on" if risk_on else "risk-off"
         detail = f"{sym} 20d={r20:+.1%} · vol20={vol:.2%} · close>{'SMA200' if risk_on else 'SMA200? no'}"
         return label, detail
+
+    for sym in ("SPY", "VOO", "IVV"):
+        df = ind[ind["ticker"] == sym]
+        if not df.empty:
+            return from_row(sym, df.iloc[0])
+
+    # Fallback: yfinance
+    try:
+        d0 = pd.Timestamp(ind["date"].max()).date() if (ind is not None and not ind.empty) else None
+        # If we can't infer date, just bail.
+        if d0 is None:
+            return "unknown", "missing index proxy"
+
+        start = (d0 - dt.timedelta(days=400)).isoformat()
+        end = (d0 + dt.timedelta(days=1)).isoformat()
+        for sym in ("SPY", "VOO", "IVV"):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                bars = yf.download(sym, start=start, end=end, interval="1d", progress=False, auto_adjust=False)
+            if bars is None or bars.empty:
+                continue
+            s = bars["Adj Close"].dropna() if "Adj Close" in bars.columns else bars["Close"].dropna()
+            if len(s) < 220:
+                continue
+            rets = s.pct_change()
+            sma200 = s.rolling(200).mean().iloc[-1]
+            r20 = (s.iloc[-1] / s.shift(20).iloc[-1] - 1.0)
+            vol20 = rets.rolling(20).std().iloc[-1]
+            row = pd.Series({"close": float(s.iloc[-1]), "sma200": float(sma200), "ret20": float(r20), "vol20": float(vol20)})
+            return from_row(sym, row)
+    except Exception:
+        pass
+
     return "unknown", "missing index proxy"
 
 
