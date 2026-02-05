@@ -1059,18 +1059,20 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     # Friendlier Telegram summary (first line becomes bold via telegram_fmt)
     summary_lines = [
         f"Swing — {trade_date.isoformat()}",
+        "",
         f"- Regime: {regime_label} ({regime_detail})",
         f"- Sector leaders: {leaders_str}",
+        "",
     ]
     top_targets = targets[:10]
     targets_line = ", ".join(top_targets[:5])
     if len(top_targets) > 5:
         targets_line += ", " + ", ".join(top_targets[5:])
     summary_lines.append(f"- Targets: {targets_line}")
-
     summary_lines.append(
         f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_PCT:.1%} · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
     )
+    summary_lines.append("")
 
     # Show indicative stop levels for first few positions (computed from avg_cost and current ATR).
     stops_preview = []
@@ -1098,6 +1100,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         if shown:
             summary_lines.append("- Catalyst notes: " + "; ".join(shown))
 
+    summary_lines.append("")
     summary_lines.append(
         f"- Trades: sells={len(exits)} · buys={len(buys)} · positions={len(positions_out)}"
     )
