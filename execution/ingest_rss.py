@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import List
 
 import feedparser
+import requests
 
 from journal import journal_run, journal_watch
 
@@ -68,7 +69,16 @@ def load_feeds(args: argparse.Namespace) -> List[str]:
 
 
 def discover_urls(feed_url: str, timeout: int) -> List[str]:
-    parsed = feedparser.parse(feed_url, request_headers={"User-Agent": "signalsmith-rss/0.1"})
+    """Fetch + parse an RSS/Atom feed with a real timeout.
+
+    feedparser's built-in URL fetching can hang depending on the environment;
+    we fetch with requests (timeout) then parse the content.
+    """
+    ua = {"User-Agent": "signalsmith-rss/0.1"}
+    resp = requests.get(feed_url, headers=ua, timeout=timeout)
+    resp.raise_for_status()
+    parsed = feedparser.parse(resp.content)
+
     urls: List[str] = []
     for e in parsed.entries or []:
         link = getattr(e, "link", None) or None

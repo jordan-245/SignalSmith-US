@@ -27,6 +27,20 @@ https://www.bls.gov/feed/bls_latest.rss
 https://www.nasdaq.com/feed/rssoutbound?category=Earnings
 https://www.nasdaq.com/feed/rssoutbound?category=Stocks
 
+# --- Sector-specific (US): high-signal policy/regulatory + industry news
+# Tech / cyber
+https://www.cisa.gov/cybersecurity-advisories/all.xml
+
+# Healthcare / pharma
+https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/fda-news-releases/rss.xml
+
+# Financials / banking regulation
+https://www.fdic.gov/news/press-releases/index.xml
+https://www.occ.gov/rss/rss-news-releases.xml
+
+# Energy / climate
+https://www.energy.gov/rss.xml
+
 # --- Likely blocked / headlines-only (disabled by default)
 # https://feeds.a.dj.com/rss/RSSMarketsMain.xml
 # https://www.marketwatch.com/rss/topstories
