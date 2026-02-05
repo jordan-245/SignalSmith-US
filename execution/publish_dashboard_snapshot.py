@@ -34,7 +34,7 @@ import requests
 from dotenv import load_dotenv
 
 REPO = Path(__file__).resolve().parents[1]
-OUT_DIR = REPO / "docs" / "public"
+OUT_DIR = REPO / "docs"
 LEAD_BOOK = REPO / "docs" / "LEAD_BOOK.md"
 RUN_LOG = REPO / "docs" / "RUN_LOG.md"
 
