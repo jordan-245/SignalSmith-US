@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta http-equiv="refresh" content="60"/>
+  <title>SignalSmith Dashboard</title>
+  <style>
+    :root{
+      --bg:#0a0d12;
+      --bg2:#070a0e;
+      --panel:#0f141c;
+      --panel2:#0c1118;
+      --stroke:rgba(255,255,255,.08);
+      --stroke2:rgba(255,255,255,.06);
+      --text:#e6edf3;
+      --muted:rgba(230,237,243,.65);
+      --shadow:0 18px 55px rgba(0,0,0,.55);
+      --radius:18px;
+
+      --todo:#6d28d9;
+      --prog:#f59e0b;
+      --done:#22c55e;
+      --arch:#94a3b8;
+
+      --card:#0b0f15;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:
+        radial-gradient(1200px circle at 12% 0%, rgba(109,40,217,.20), transparent 55%),
+        radial-gradient(1200px circle at 86% 18%, rgba(34,197,94,.12), transparent 55%),
+        linear-gradient(180deg,var(--bg),var(--bg2));
+      min-height:100vh;
+    }
+
+    .app{display:grid;grid-template-columns:280px 1fr;gap:18px;padding:18px;min-height:100vh;}
+
+    /* Sidebar */
+    .sidebar{background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border:1px solid var(--stroke);border-radius:22px;padding:18px;box-shadow:var(--shadow);
+      display:flex;flex-direction:column;gap:14px;}
+    .avatarWrap{display:flex;align-items:center;justify-content:center;padding-top:8px;}
+    .avatar{width:110px;height:110px;border-radius:999px;background:
+      radial-gradient(circle at 30% 30%, rgba(255,255,255,.25), transparent 38%),
+      linear-gradient(135deg, rgba(109,40,217,.55), rgba(245,158,11,.25));
+      border:1px solid var(--stroke);box-shadow:0 20px 70px rgba(0,0,0,.6);
+      display:flex;align-items:center;justify-content:center;font-size:54px;}
+    .sName{font-weight:800;font-size:18px;text-align:center;margin-top:6px;}
+    .sSub{color:var(--muted);font-size:12px;text-align:center;}
+    .statusRow{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:12px;}
+    .dot{width:8px;height:8px;border-radius:999px;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.15)}
+
+    .sideCards{display:grid;gap:10px;margin-top:4px}
+    .mini{background:rgba(0,0,0,.18);border:1px solid var(--stroke2);border-radius:14px;padding:10px 12px;}
+    .mini .k{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase;}
+    .mini .v{margin-top:6px;font-size:13px;font-weight:700;}
+
+    /* Main */
+    .main{display:grid;grid-template-rows:auto auto 1fr;gap:16px;}
+
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;
+      background:rgba(255,255,255,.04);border:1px solid var(--stroke);border-radius:22px;padding:14px 16px;box-shadow:var(--shadow);
+    }
+    .topLeft{display:flex;align-items:center;gap:10px;}
+    .badgeFace{width:26px;height:26px;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid var(--stroke);
+      display:flex;align-items:center;justify-content:center;font-size:14px;}
+    .topTitle{font-weight:800;}
+    .online{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;margin-left:10px;}
+    .rightMeta{display:flex;align-items:center;gap:10px;}
+    .pill{background:rgba(0,0,0,.18);border:1px solid var(--stroke2);border-radius:999px;padding:8px 12px;color:var(--muted);font-size:12px;}
+    .btn{background:rgba(255,255,255,.06);border:1px solid var(--stroke2);border-radius:12px;padding:8px 12px;color:var(--text);font-size:12px;cursor:pointer}
+    .btn:hover{background:rgba(255,255,255,.09)}
+
+    /* Layout: Kanban + hero */
+    .mid{display:grid;grid-template-columns: 1.6fr 1fr;gap:16px;align-items:start;}
+
+    .kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+    .col{background:rgba(255,255,255,.03);border:1px solid var(--stroke2);border-radius:18px;padding:12px;min-height:540px;box-shadow:var(--shadow)}
+    .colHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+    .colHead h2{margin:0;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);}
+    .count{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--stroke2);color:var(--muted);}
+
+    .todo .count{border-color:rgba(109,40,217,.4);background:rgba(109,40,217,.12);color:#ddd6fe}
+    .prog .count{border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.12);color:#ffedd5}
+    .done .count{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.12);color:#dcfce7}
+    .arch .count{border-color:rgba(148,163,184,.35);background:rgba(148,163,184,.08);color:rgba(230,237,243,.75)}
+
+    .card{background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+      border:1px solid var(--stroke2);border-radius:16px;padding:10px 12px;margin:10px 0;
+    }
+    .card .t{font-weight:800;font-size:13px;margin-bottom:6px;}
+    .card .meta{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:8px}
+    .card .b{color:var(--muted);font-size:12px;line-height:1.35}
+    .card .b div{margin:2px 0}
+
+    .todo .card{box-shadow:0 0 0 1px rgba(109,40,217,.14) inset;}
+    .prog .card{box-shadow:0 0 0 1px rgba(245,158,11,.14) inset;}
+    .done .card{box-shadow:0 0 0 1px rgba(34,197,94,.14) inset;}
+    .arch .card{opacity:.78}
+
+    .hero{background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border:1px solid var(--stroke);border-radius:22px;padding:14px 16px;box-shadow:var(--shadow);
+      min-height:540px;}
+    .hero h2{margin:0 0 10px 0;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);}
+    .heroBox{background:rgba(0,0,0,.18);border:1px solid var(--stroke2);border-radius:16px;padding:12px;min-height:476px;}
+
+    /* Bottom row (simple placeholders like the image) */
+    .bottom{background:rgba(255,255,255,.03);border:1px solid var(--stroke2);border-radius:22px;padding:14px 16px;box-shadow:var(--shadow)}
+    .bottom h2{margin:0 0 10px 0;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);}
+    .miniGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+    .miniItem{background:rgba(0,0,0,.18);border:1px solid var(--stroke2);border-radius:16px;padding:12px;}
+    .miniItem .t{font-weight:800;font-size:12px;margin-bottom:4px}
+    .miniItem .d{color:var(--muted);font-size:11px}
+
+    @media (max-width: 1200px){
+      .app{grid-template-columns:1fr}
+      .sidebar{order:2}
+      .mid{grid-template-columns:1fr}
+      .kanban{grid-template-columns:repeat(2,1fr)}
+      .miniGrid{grid-template-columns:repeat(2,1fr)}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="avatarWrap"><div class="avatar">🦞</div></div>
+    <div>
+      <div class="sName">SignalSmith</div>
+      <div class="sSub">Swing Research & Execution</div>
+      <div class="statusRow"><span class="dot"></span><span>Online</span></div>
+    </div>
+
+    <div class="sideCards">
+      <div class="mini"><div class="k">Updated (AEST)</div><div class="v" id="updated_aest">—</div></div>
+      <div class="mini"><div class="k">Equity (swing)</div><div class="v" id="equity">—</div></div>
+      <div class="mini"><div class="k">Cash</div><div class="v" id="cash">—</div></div>
+      <div class="mini"><div class="k">Next RSS ingest</div><div class="v" id="rss_next">—</div></div>
+      <div class="mini"><div class="k">Next approval sweep</div><div class="v" id="appr_next">—</div></div>
+    </div>
+
+    <div class="sSub" style="margin-top:auto">Public • auto-refresh ~1m</div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topLeft">
+        <div class="badgeFace">🙂</div>
+        <div class="topTitle">SignalSmith Dashboard</div>
+        <div class="online"><span class="dot" style="width:6px;height:6px;box-shadow:none"></span><span>Online</span></div>
+      </div>
+      <div class="rightMeta">
+        <div class="pill" id="updated_utc">Last sync: —</div>
+        <button class="btn" onclick="location.reload()">Refresh</button>
+      </div>
+    </header>
+
+    <section class="mid">
+      <section class="kanban" aria-label="Lead pipeline">
+        <div class="col todo">
+          <div class="colHead"><h2>To Do</h2><span class="count" id="todo_n">0</span></div>
+          <div id="todo"></div>
+        </div>
+        <div class="col prog">
+          <div class="colHead"><h2>In Progress</h2><span class="count" id="prog_n">0</span></div>
+          <div id="prog"></div>
+        </div>
+        <div class="col done">
+          <div class="colHead"><h2>Done</h2><span class="count" id="done_n">0</span></div>
+          <div id="done"></div>
+        </div>
+        <div class="col arch">
+          <div class="colHead"><h2>Archived</h2><span class="count" id="arch_n">0</span></div>
+          <div id="arch"></div>
+        </div>
+      </section>
+
+      <aside class="hero" aria-label="Equity">
+        <h2>Equity (hero)</h2>
+        <div class="heroBox">
+          <div class="sSub" id="pnl_line" style="margin-bottom:10px">—</div>
+          <div class="sSub">(Chart rendering next — currently showing key stats only.)</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="bottom" aria-label="Quick links">
+      <h2>Panels</h2>
+      <div class="miniGrid">
+        <div class="miniItem"><div class="t">Sector leaders</div><div class="d" id="sector_leaders">—</div></div>
+        <div class="miniItem"><div class="t">Sector laggards</div><div class="d" id="sector_laggards">—</div></div>
+        <div class="miniItem"><div class="t">Oil watch</div><div class="d" id="oil_watch">—</div></div>
+        <div class="miniItem"><div class="t">Cross-assets</div><div class="d" id="cross_assets">—</div></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  const esc = (s) => (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  function cardHTML(card){
+    const bullets = (card.bullets || []).slice(0,4).map(b=>`<div>• ${esc(b)}</div>`).join('');
+    const date = card.date || '';
+    return `<div class="card"><div class="t">${esc(card.title||'')}</div><div class="b">${bullets}</div><div class="meta"><span>${esc(date)}</span><span>⋯</span></div></div>`;
+  }
+
+  async function refresh(){
+    try{
+      const res = await fetch('/dashboard.json?ts='+Date.now(), {cache:'no-store'});
+      const data = await res.json();
+
+      document.getElementById('updated_aest').textContent = data.generated_at_aest || '—';
+      document.getElementById('updated_utc').textContent = 'Last sync: ' + (data.generated_at_aest || data.generated_at_utc || '—');
+
+      const eq = (data.equity||{});
+      document.getElementById('equity').textContent = (eq.equity!=null) ? ('$'+Number(eq.equity).toFixed(2)) : '—';
+      document.getElementById('cash').textContent = (eq.cash!=null) ? ('$'+Number(eq.cash).toFixed(2)) : '—';
+
+      const nr = (data.next_runs||{});
+      document.getElementById('rss_next').textContent = nr.rss_ingest_next_aest || nr.rss_ingest_next_utc || '—';
+      document.getElementById('appr_next').textContent = nr.approval_sweep_next_aest || nr.approval_sweep_next_utc || '—';
+
+      const k = data.lead_pipeline || {};
+      const todo = (k.TODO||[]);
+      const prog = (k.IN_PROGRESS||[]);
+      const done = (k.READY||[]);
+      const arch = (k.ARCHIVED||[]);
+
+      document.getElementById('todo').innerHTML = todo.map(cardHTML).join('');
+      document.getElementById('prog').innerHTML = prog.map(cardHTML).join('');
+      document.getElementById('done').innerHTML = done.map(cardHTML).join('');
+      document.getElementById('arch').innerHTML = arch.map(cardHTML).join('');
+
+      document.getElementById('todo_n').textContent = todo.length;
+      document.getElementById('prog_n').textContent = prog.length;
+      document.getElementById('done_n').textContent = done.length;
+      document.getElementById('arch_n').textContent = arch.length;
+
+      const s = data.equity_summary || {};
+      if (s.start_equity != null && s.current_equity != null){
+        const pnl = s.current_equity - s.start_equity;
+        const pct = (s.start_equity ? (pnl/s.start_equity) : 0);
+        document.getElementById('pnl_line').textContent = `Window P&L: ${pnl>=0?'+':''}$${pnl.toFixed(0)} (${(pct*100).toFixed(2)}%) • Max DD: ${(s.max_drawdown*100).toFixed(2)}%`;
+      } else if (eq.equity != null) {
+        document.getElementById('pnl_line').textContent = `Equity: $${Number(eq.equity).toFixed(0)} • Cash: $${Number(eq.cash||0).toFixed(0)}`;
+      }
+
+      // Sector radar
+      const sr = data.sector_radar || {};
+      const sectors = (sr.sectors || []);
+      if (sectors.length){
+        const leaders = sectors.slice(0,3).map(x => `${x.symbol} (${(x.rs20*100).toFixed(1)}%)`).join(' · ');
+        const laggards = sectors.slice(-3).reverse().map(x => `${x.symbol} (${(x.rs20*100).toFixed(1)}%)`).join(' · ');
+        document.getElementById('sector_leaders').textContent = leaders;
+        document.getElementById('sector_laggards').textContent = laggards;
+      }
+      const cross = (sr.cross || []);
+      if (cross.length){
+        const s2 = cross.slice(0,4).map(x => `${x.symbol} ${((x.ret20||0)*100).toFixed(1)}%`).join(' · ');
+        document.getElementById('cross_assets').textContent = s2;
+      }
+
+      // Oil watch: summarize USO + XLE relative strength
+      const bySym = {};
+      for (const x of cross){ bySym[x.symbol] = x; }
+      const uso = bySym['USO'];
+      const xle = (sectors || []).find(x => x.symbol === 'XLE');
+      if (uso || xle){
+        const uso20 = uso ? ((uso.ret20||0)*100).toFixed(1)+'%' : '—';
+        const xleRS = xle ? ((xle.rs20||0)*100).toFixed(1)+'%' : '—';
+        const line = `USO 20d ${uso20} | XLE RS20 ${xleRS}`;
+        document.getElementById('oil_watch').textContent = line;
+      }
+
+    }catch(e){
+      // ignore
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 30000);
+</script>
+</body>
+</html>
