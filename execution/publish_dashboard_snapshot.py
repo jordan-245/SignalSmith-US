@@ -195,6 +195,15 @@ def main() -> None:
         except Exception:
             sector_radar = None
 
+    # Optional: sector brief (tagged docs)
+    brief_path = REPO / "output" / "sector_brief.json"
+    sector_brief = None
+    if brief_path.exists():
+        try:
+            sector_brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        except Exception:
+            sector_brief = None
+
     payload: Dict[str, Any] = {
         "generated_at_utc": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "generated_at_aest": now_aest.replace(microsecond=0).isoformat(),
@@ -203,6 +212,7 @@ def main() -> None:
         "next_runs": next_runs_hint(now),
         "lead_pipeline": lead_pipeline,
         "sector_radar": sector_radar,
+        "sector_brief": sector_brief,
         "equity_summary": {
             "start_equity": None,
             "current_equity": (eq or {}).get("equity"),
