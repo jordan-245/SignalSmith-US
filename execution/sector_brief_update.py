@@ -302,11 +302,57 @@ def main() -> None:
     append_once(day, "\n".join(md_lines))
 
     if args.notify and triggers:
-        send_telegram(
-            "Sector Brief triggers — {day}\n\n".format(day=day.isoformat())
-            + "- "
-            + "\n- ".join(triggers[:10])
+        # Short trader-style, general-knowledge summary (no direct trading instructions)
+        sym_to_name = {
+            "XLC": "Comms",
+            "XLY": "Discretionary",
+            "XLP": "Staples",
+            "XLE": "Energy",
+            "XLF": "Financials",
+            "XLV": "Health Care",
+            "XLI": "Industrials",
+            "XLB": "Materials",
+            "XLRE": "Real Estate",
+            "XLK": "Tech",
+            "XLU": "Utilities",
+        }
+
+        # Convert trigger strings like "XLB ret1=-2.7%" into compact bullets.
+        bullets: List[str] = []
+        saw = set()
+        for tr in triggers[:10]:
+            m = re.match(r"^(X[A-Z]{2,3})\s+ret1=([+-]?[0-9.]+)%$", tr.strip())
+            if m:
+                sym = m.group(1)
+                mv = float(m.group(2)) / 100.0
+                name = sym_to_name.get(sym, sym)
+                key = (sym, mv)
+                if key in saw:
+                    continue
+                saw.add(key)
+                bullets.append(f"{name} ({sym}) {mv:+.1%}")
+            else:
+                # fallback (e.g., news spike)
+                bullets.append(tr)
+
+        # Takeaway heuristic (general)
+        takeaway_bits: List[str] = []
+        # risk-off proxy: cyclicals/tech down together
+        if any("XLK" in t or "Tech" in t for t in bullets) and any("XLY" in t or "Discretionary" in t for t in bullets):
+            takeaway_bits.append("growth/cyclical pressure")
+        if any("XLB" in t or "Materials" in t for t in bullets) or any("XLI" in t or "Industrials" in t for t in bullets):
+            takeaway_bits.append("cyclical sensitivity")
+        if any("XLP" in t or "Staples" in t for t in bullets) or any("XLU" in t or "Utilities" in t for t in bullets):
+            takeaway_bits.append("defensives in focus")
+        if not takeaway_bits:
+            takeaway_bits.append("notable sector move")
+
+        msg = (
+            f"Sector Brief — {day.isoformat()}\n"
+            f"Moves: " + " | ".join(bullets[:4]) + ("" if len(bullets) <= 4 else " | …") + "\n"
+            f"Takeaway: " + ", ".join(sorted(set(takeaway_bits)))
         )
+        send_telegram(msg)
 
     print("HEARTBEAT_OK")
 
