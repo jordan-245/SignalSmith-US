@@ -162,8 +162,9 @@ def next_runs_hint(now_utc: dt.datetime) -> Dict[str, str]:
 
 
 def render_html() -> str:
-    # The live UI is served from /var/www/signalsmith/index.html
-    # This script still writes index.html for completeness, but the system now uses the file already deployed.
+    p = REPO / "ui" / "static_dashboard" / "index.html"
+    if p.exists():
+        return p.read_text(encoding="utf-8")
     return (OUT_DIR / "index.html").read_text(encoding="utf-8") if (OUT_DIR / "index.html").exists() else ""
 
 
@@ -222,8 +223,9 @@ def main() -> None:
 
     (OUT_DIR / "dashboard.json").write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
 
-    # index.html is managed as a static asset in OUT_DIR.
-    # Keep it as-is (don’t rewrite) to allow manual styling without touching python.
+    html = render_html()
+    if html:
+        (OUT_DIR / "index.html").write_text(html, encoding="utf-8")
 
     print(f"[ok] wrote {OUT_DIR/'dashboard.json'}")
 
