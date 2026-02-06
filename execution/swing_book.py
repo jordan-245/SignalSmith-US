@@ -23,6 +23,7 @@ import datetime as dt
 import io
 import math
 import os
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -109,6 +110,11 @@ SECTOR_ETFS = sorted(set(SECTOR_ETF.values()))
 MIN_MARKET_CAP = float(os.getenv("SWING_MIN_MARKET_CAP", "0"))  # default: no hard cap
 MIN_AVG_VOLUME = float(os.getenv("SWING_MIN_AVG_VOLUME", "0"))  # default: no hard cap
 MIN_AVG_DOLLAR_VOL = float(os.getenv("SWING_MIN_AVG_DOLLAR_VOL", "20000000"))  # $20M/day default
+
+# Simple idempotency + non-overlap guardrails
+STATE_DIR = Path(__file__).resolve().parents[1] / "output" / "state"
+LOCK_PATH = Path(os.getenv("SWING_BOOK_LOCK_PATH", "/tmp/signalsmith_swing_book.lock"))
+LOCK_STALE_SECONDS = int(os.getenv("SWING_BOOK_LOCK_STALE_SECONDS", "7200"))
 
 
 def load_env() -> None:
@@ -684,11 +690,55 @@ def market_note(ind: pd.DataFrame) -> Tuple[str, str]:
     return "unknown", "missing index proxy"
 
 
+def _acquire_lock() -> None:
+    """Best-effort non-overlap lock.
+
+    Prevents accidental double-runs (and duplicate Telegram) if timers overlap or
+    are manually re-triggered.
+    """
+
+    try:
+        if LOCK_PATH.exists():
+            age = time.time() - LOCK_PATH.stat().st_mtime
+            if age > LOCK_STALE_SECONDS:
+                # stale lock: remove
+                LOCK_PATH.unlink(missing_ok=True)
+        # atomic create
+        fd = os.open(str(LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            fp.write(f"pid={os.getpid()} ts={dt.datetime.now(dt.timezone.utc).isoformat()}\n")
+    except FileExistsError:
+        raise RuntimeError(f"swing_book lock is held: {LOCK_PATH}")
+
+
+def _release_lock() -> None:
+    try:
+        LOCK_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _state_marker(trade_date: dt.date, mode: str) -> Path:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    return STATE_DIR / f"swing_book_{trade_date.isoformat()}_{mode}.done"
+
+
 def run(trade_date: dt.date, mode: str = "pre") -> None:
     # Skip weekends/holidays so the cron schedule is safe.
     if not market_is_open(trade_date.isoformat()):
         send_telegram(f"[swing] {trade_date.isoformat()} market closed; skipping.")
         return
+
+    # Idempotency: if this mode already completed today, exit quietly.
+    marker = _state_marker(trade_date, mode)
+    if marker.exists():
+        # quiet: prevents duplicate swing messages/orders
+        return
+
+    _acquire_lock()
+    import atexit
+
+    atexit.register(_release_lock)
 
     ensure_portfolio(DEFAULT_PORTFOLIO_ID, DEFAULT_PORTFOLIO_NAME, DEFAULT_CASH)
 
@@ -760,7 +810,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         pass
 
     if ranked.empty:
-        send_telegram(f"[swing] {trade_date.isoformat()} no candidates. {note}")
+        send_telegram(f"[swing] {trade_date.isoformat()} no candidates. {regime_detail}")
         return
 
     # Earnings avoid rule: do not open new positions into earnings within the next N sessions.
@@ -1187,6 +1237,10 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     )
     summary_lines.append(f"- Equity: ${equity:,.2f} · Cash: ${cash:,.2f}")
     send_telegram("\n".join(summary_lines))
+
+    # Mark this mode as completed for the day (prevents duplicate messages/orders).
+    marker.write_text(dt.datetime.now(dt.timezone.utc).isoformat() + "\n", encoding="utf-8")
+    _release_lock()
 
 
 def main() -> None:

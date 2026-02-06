@@ -149,7 +149,21 @@ def append_entry(date: str, portfolio_id: str, equity_row: Optional[dict], order
 
     if orders:
         lines.append("\n### Orders")
+
+        # Collapse duplicates caused by accidental re-runs (same ticker+side same day)
+        # while preserving that it happened.
+        buckets: Dict[tuple, List[dict]] = {}
         for o in orders:
+            k = (o.get("ticker"), o.get("side"))
+            buckets.setdefault(k, []).append(o)
+
+        for (ticker, side) in sorted(buckets.keys(), key=lambda x: (str(x[0]), str(x[1]))):
+            group = buckets[(ticker, side)]
+            # deterministic: pick the latest order_id
+            group = sorted(group, key=lambda x: str(x.get("order_id") or ""))
+            o = group[-1]
+            dup_n = len(group)
+
             tw = o.get("target_weight")
             tw_s = f"{float(tw)*100:.2f}%" if tw is not None else ""
             qe = o.get("qty_estimate")
@@ -159,22 +173,35 @@ def append_entry(date: str, portfolio_id: str, equity_row: Optional[dict], order
             is_s = f" | IS={fmt_money(is_d)}" if is_d is not None else ""
             rp = rj.get("risk_pct")
             rp_s = f" | risk={float(rp)*100:.1f}%" if rp is not None else ""
-            lines.append(f"- {o.get('ticker')} {o.get('side')} {qe_s} @ target {tw_s} ({o.get('status')}){rp_s}{is_s}")
+            dup_s = f" | dup_runs=x{dup_n}" if dup_n > 1 else ""
+            lines.append(f"- {ticker} {side} {qe_s} @ target {tw_s} ({o.get('status')}){rp_s}{is_s}{dup_s}")
 
     if fills:
         lines.append("\n### Fills")
         # map order_id -> order
         omap = {o.get("order_id"): o for o in orders}
+
+        # Collapse duplicate re-run fills (same ticker+side same day)
+        buckets_f: Dict[tuple, List[dict]] = {}
         for f in fills:
             o = omap.get(f.get("order_id")) or {}
+            k = (o.get("ticker") or "?", o.get("side") or "?")
+            buckets_f.setdefault(k, []).append(f)
+
+        for (ticker, side) in sorted(buckets_f.keys(), key=lambda x: (str(x[0]), str(x[1]))):
+            group = sorted(buckets_f[(ticker, side)], key=lambda x: str(x.get("filled_at") or ""))
+            f = group[-1]
+            dup_n = len(group)
+            dup_s = f" | dup_runs=x{dup_n}" if dup_n > 1 else ""
             lines.append(
-                "- {ticker} {side} fill={fill} | slip={slip}bps | fees={fees} | method={meth}".format(
-                    ticker=o.get("ticker") or "?",
-                    side=o.get("side") or "?",
+                "- {ticker} {side} fill={fill} | slip={slip}bps | fees={fees} | method={meth}{dup}".format(
+                    ticker=ticker,
+                    side=side,
                     fill=(f"{float(f.get('fill_price')):.4f}" if f.get("fill_price") is not None else ""),
                     slip=(f"{float(f.get('slippage_bps')):.1f}" if f.get("slippage_bps") is not None else ""),
                     fees=(fmt_money(f.get("fees")) or ""),
                     meth=f.get("fill_method") or "",
+                    dup=dup_s,
                 )
             )
 
