@@ -128,6 +128,27 @@ def shorten_url(url: str, max_len: int = 70) -> str:
     return url[: max_len - 1] + "…"
 
 
+def _load_alert_sources() -> set[str]:
+    """Return the allowlist of docs_raw.source hostnames permitted to trigger Telegram alerts.
+
+    If the file doesn't exist, we default to "alert on anything" (backwards compatible).
+    """
+
+    fpath = Path(__file__).resolve().parents[1] / "directives" / "news_alert_sources.txt"
+    if not fpath.exists():
+        return set()
+    out: set[str] = set()
+    for line in fpath.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if "#" in s:
+            s = s.split("#", 1)[0].strip()
+        if s:
+            out.add(s.lower())
+    return out
+
+
 def main() -> None:
     load_env()
     args = parse_args()
@@ -141,19 +162,24 @@ def main() -> None:
         print("HEARTBEAT_OK")
         return
 
+    # Tiering: we ingest everything, but we only *alert* on high-signal sources.
+    alert_sources = _load_alert_sources()
+    # Empty allowlist = backwards compatible behavior (alert on anything).
+    if alert_sources:
+        alert_rows = [
+            r
+            for r in rows
+            if ((r.get("docs_raw") or {}).get("source") or "").lower() in alert_sources
+        ]
+    else:
+        alert_rows = rows
+
     ticker_counts: Dict[str, int] = {}
     neg_hits: List[Tuple[str, str]] = []  # (ticker-ish, label)
     pos_hits: List[Tuple[str, str]] = []
 
-    links: List[str] = []
-
-    for r in rows:
+    for r in alert_rows:
         text = (r.get("cleaned_text") or "")
-        md = (r.get("docs_raw") or {})
-        url = md.get("url") or ""
-        if url:
-            links.append(shorten_url(url))
-
         tickers = extract_tickers(text)
         for t in tickers:
             ticker_counts[t] = ticker_counts.get(t, 0) + 1
@@ -170,16 +196,17 @@ def main() -> None:
 
     top_tickers = sorted(ticker_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:8]
 
-    # Notify when something looks materially actionable.
-    # - red flags always
-    # - mention spikes optionally (doc volume threshold)
-    noteworthy = bool(neg_hits) or (len(rows) >= args.min_docs)
+    # Notify when something looks materially actionable *from Tier A sources*.
+    noteworthy = bool(neg_hits) or (len(alert_rows) >= args.min_docs)
     if not (noteworthy or args.force):
         print("HEARTBEAT_OK")
         return
 
     header = f"News — last {args.lookback_min}m"
     lines = [header]
+
+    if alert_sources:
+        lines.append(f"- Tier A sources scanned: {len(alert_rows)}/{len(rows)} docs")
 
     # Keep it short.
     if top_tickers:

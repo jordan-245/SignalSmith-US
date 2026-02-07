@@ -1,0 +1,24 @@
+# Tier A (high-signal) sources allowed to trigger Telegram alerts.
+# One hostname per line. Comments allowed.
+#
+# Note: This is matched against docs_raw.source (currently urlparse(url).netloc in ingest_docs.py).
+
+# US — SEC / EDGAR
+www.sec.gov
+sec.gov
+
+# US — regulators / government
+www.fda.gov
+fda.gov
+www.federalregister.gov
+federalregister.gov
+
+# Press release wires (selected high-signal)
+www.globenewswire.com
+globenewswire.com
+
+# Australia — ASX announcements syndicator
+finance.mooh.org
+
+# Canada — TMX (feedburner redirects vary)
+feeds.feedburner.com
