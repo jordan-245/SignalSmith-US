@@ -57,3 +57,12 @@ Rules:
 - **Fix:** added `warn_if_missing` parameter (default `False` to preserve quiet behavior); approval timeout sweep now passes `warn_if_missing=True` so cron logs clearly show why Telegram didn’t send.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing env → prints `[telegram] skipped: missing TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID`.
 - **Follow-ups:** set Telegram bot env in cron/runtime so misconfig warnings reach ops.
+
+---
+
+## 2026-02-07T04:00:00+00:00 — Incident A6: approval timeout sweep treated missing env as success
+- **Symptom:** cron run printed missing `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE` and missing Telegram env, but exited 0 → job looked healthy while doing nothing.
+- **Root cause:** `execution/approval_timeout.py` returned early on missing Supabase config without failing the process.
+- **Fix:** make missing Supabase config a hard failure (`SystemExit(2)`), and when `--notify-telegram` is set, explicitly log if Telegram env is missing so the operator knows why no message was sent.
+- **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing env → prints clear ERROR lines, exits 2.
+- **Follow-ups:** set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` in the cron/runtime environment.

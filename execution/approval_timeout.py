@@ -145,17 +145,24 @@ def send_telegram_summary(expired: List[dict], timeout_minutes: int) -> None:
     _send("\n".join(lines), timeout=10, warn_if_missing=True)
 
 
+def telegram_enabled() -> bool:
+    return bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(os.getenv("TELEGRAM_CHAT_ID"))
+
+
 def main() -> None:
     load_env()
     args = parse_args()
 
-    # If Supabase isn't configured, we can't sweep approvals. This is usually a
-    # deployment/config issue, so (optionally) notify Telegram.
+    # If Supabase isn't configured, we can't sweep approvals.
+    # This is a deployment/config issue and should FAIL the job so it can't silently rot.
     if not supabase_enabled():
-        msg = "[approval_timeout] skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE"
+        msg = "[approval_timeout] ERROR: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE"
         print(msg)
+
         if args.notify_telegram:
-            try:
+            if not telegram_enabled():
+                print("[approval_timeout] ERROR: cannot notify Telegram (missing TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)")
+            else:
                 from telegram_fmt import send_telegram as _send
 
                 _send(
@@ -163,11 +170,9 @@ def main() -> None:
                     "No approval requests were checked or auto-denied.\n"
                     "Fix: set SUPABASE_URL + SUPABASE_SERVICE_ROLE in .env (or process env) for this deployment.",
                     timeout=10,
-                    warn_if_missing=True,
                 )
-            except Exception as exc:
-                print(f"[approval_timeout] telegram notify failed: {exc}")
-        return
+
+        raise SystemExit(2)
 
     now = dt.datetime.now(dt.timezone.utc)
     cutoff = now - dt.timedelta(minutes=args.timeout_minutes)
