@@ -548,6 +548,32 @@ def eligible_to_sell(pos: Dict, trade_date: dt.date) -> bool:
     return eligible2 <= trade_date
 
 
+def fetch_existing_order_ids(trade_date: dt.date, ticker: str, side: str) -> List[str]:
+    """Best-effort de-dupe guard.
+
+    paper_orders table does not currently have portfolio_id, so we can only
+    de-dupe by date+ticker+side.
+    """
+
+    base = supabase_base()
+    url = f"{base}/rest/v1/paper_orders"
+    params = [
+        ("select", "order_id"),
+        ("date", f"eq.{trade_date.isoformat()}"),
+        ("ticker", f"eq.{ticker}"),
+        ("side", f"eq.{side}"),
+        ("limit", "5"),
+    ]
+    try:
+        resp = requests.get(url, headers=supabase_headers(), params=params, timeout=15)
+        if resp.status_code >= 300:
+            return []
+        rows = resp.json() or []
+        return [r.get("order_id") for r in rows if r.get("order_id")]
+    except Exception:
+        return []
+
+
 def upsert(table: str, rows: List[Dict], conflict_cols: List[str]) -> None:
     """Upsert rows into Supabase.
 
@@ -835,7 +861,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     # - Stop-loss breach exits immediately (even if not yet eligible to sell)
     # - Time stop: if held long enough with insufficient progress, exit once eligible
     # - Otherwise, if eligible and (no longer in targets OR close below SMA50)
-    exits: List[str] = []
+    exits: List[Tuple[str, str]] = []  # (ticker, reason)
     for t, p in held.items():
         row = ind[ind["ticker"] == t]
         close_px = float(row.iloc[0]["close"]) if not row.empty else None
@@ -843,7 +869,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         avg_cost = float(p.get("avg_cost") or 0.0)
         st = stop_level(t, avg_cost)
         if close_px is not None and st is not None and close_px <= st:
-            exits.append(t)
+            exits.append((t, "stop"))
             continue
 
         if not eligible_to_sell(p, trade_date):
@@ -861,14 +887,14 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
                 if atr_now is not None and not pd.isna(atr_now):
                     thresh = avg_cost + TIME_STOP_PROGRESS_ATR * float(atr_now)
                     if close_px < thresh:
-                        exits.append(t)
+                        exits.append((t, "time"))
                         continue
 
         below = False
         if close_px is not None and not row.empty:
             below = close_px < float(row.iloc[0]["sma50"])
         if (t not in targets) or below:
-            exits.append(t)
+            exits.append((t, "rotate"))
 
     # Decide entries: targets not held
     entries = [t for t in targets if t not in held]
@@ -897,7 +923,11 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         return float(r.iloc[0]["close"])
 
     # Sells
-    for t in exits:
+    for t, reason in exits:
+        # De-dupe: if we already placed a sell for this ticker today, skip.
+        if fetch_existing_order_ids(trade_date, t, "sell"):
+            continue
+
         qty = float(held[t].get("qty") or 0.0)
         if qty <= 0:
             continue
@@ -929,7 +959,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
                 "fill_price": round(fill_price, 6),
                 "implementation_shortfall_per_share": round(impl_shortfall_per_share, 6),
                 "implementation_shortfall_dollars": round(impl_shortfall_per_share * qty, 2),
-                "source": "exit",
+                "source": f"exit_{reason}",
             },
         })
         fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
@@ -1232,15 +1262,24 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             summary_lines.append("- Catalyst notes: " + "; ".join(shown))
 
     summary_lines.append("")
+    sell_stop = sum(1 for _, r in exits if r == "stop")
+    sell_time = sum(1 for _, r in exits if r == "time")
+    sell_rotate = sum(1 for _, r in exits if r == "rotate")
     summary_lines.append(
-        f"- Trades: sells={len(exits)} · buys={len(buys)} · positions={len(positions_out)}"
+        f"- Trades: sells={len(exits)} (stop={sell_stop}, time={sell_time}, rotate={sell_rotate}) · buys={len(buys)} · positions={len(positions_out)}"
     )
     summary_lines.append(f"- Equity: ${equity:,.2f} · Cash: ${cash:,.2f}")
-    send_telegram("\n".join(summary_lines))
-
     # Mark this mode as completed for the day (prevents duplicate messages/orders).
     marker.write_text(dt.datetime.now(dt.timezone.utc).isoformat() + "\n", encoding="utf-8")
+
+    # Release lock before messaging (so transient Telegram issues don’t cause reruns).
     _release_lock()
+
+    # Best-effort message
+    try:
+        send_telegram("\n".join(summary_lines))
+    except Exception:
+        pass
 
 
 def main() -> None:
