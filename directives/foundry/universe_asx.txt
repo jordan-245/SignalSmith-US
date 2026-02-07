@@ -1,0 +1,3 @@
+# Signal Foundry ASX universe (MVP not implemented yet)
+# One ticker per line, use .AX suffix
+

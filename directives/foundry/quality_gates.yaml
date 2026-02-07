@@ -1,0 +1,15 @@
+# Signal Foundry MVP quality gates
+# If any gate fails, the report should not be promoted to latest.
+
+coverage:
+  # fraction of tickers with enough price history for features/labels
+  min_ok_ticker_frac: 0.90
+
+training:
+  # minimum rows per ticker after feature/label joins
+  min_rows_per_ticker: 350
+
+calibration:
+  # very loose MVP bounds; tighten after we see distributions
+  max_brier: 0.30
+

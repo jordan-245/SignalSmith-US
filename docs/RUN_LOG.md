@@ -53,3 +53,6 @@ Format:
 - 2026-02-07T10:06:45+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
 - 2026-02-07T10:14:44+00:00 | swing_risk_grid | ok | years=2 combos=144 csv=output/backtests/swing_risk_grid_20260207101444.csv
 - 2026-02-07T10:35:14+00:00 | swing_risk_grid_v2 | ok | years=2 combos=144 csv=output/backtests/swing_risk_grid_v2_20260207103514.csv
+- 2026-02-07T12:20:09+00:00 | foundry_run | ok | market=US run_id=20260207122009 tickers_test=78 years=5
+- 2026-02-07T11:06:44+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
+- 2026-02-07T12:07:52+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
