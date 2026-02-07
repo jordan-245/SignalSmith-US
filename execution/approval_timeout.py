@@ -149,9 +149,23 @@ def main() -> None:
     load_env()
     args = parse_args()
 
-    # Noise control: if Supabase isn't configured in this runtime, skip cleanly.
+    # If Supabase isn't configured, we can't sweep approvals. This is usually a
+    # deployment/config issue, so (optionally) notify Telegram.
     if not supabase_enabled():
-        print("[approval_timeout] skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE")
+        msg = "[approval_timeout] skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE"
+        print(msg)
+        if args.notify_telegram:
+            try:
+                from telegram_fmt import send_telegram as _send
+
+                _send(
+                    "Approval timeout sweep could not run: missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE.\n"
+                    "No approval requests were checked or auto-denied.\n"
+                    "Fix: set SUPABASE_URL + SUPABASE_SERVICE_ROLE in .env for this deployment.",
+                    timeout=10,
+                )
+            except Exception as exc:
+                print(f"[approval_timeout] telegram notify failed: {exc}")
         return
 
     now = dt.datetime.now(dt.timezone.utc)
