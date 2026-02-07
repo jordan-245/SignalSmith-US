@@ -199,11 +199,43 @@ def tech_stats(ticker: str, days: int = 260) -> Optional[dict]:
 
 
 def fundamentals(ticker: str) -> dict:
-    """Best-effort fundamentals via yfinance."""
-    out = {}
+    """Best-effort fundamentals via yfinance.
+
+    yfinance coverage varies a lot across:
+    - ETFs (quoteType=ETF) → sector/industry often missing; use category/fundFamily/totalAssets.
+    - Small/microcaps → info endpoints sometimes sparse.
+
+    We try multiple sources and return a compact dict with a few stable fields.
+    """
+
+    out: Dict[str, object] = {}
+
     try:
-        info = yf.Ticker(ticker).info or {}
-        keep = [
+        tk = yf.Ticker(ticker)
+
+        # 1) info (slow but richest)
+        info = {}
+        try:
+            info = tk.info or {}
+        except Exception:
+            info = {}
+
+        # 2) fast_info (often available even when info is sparse)
+        fast = {}
+        try:
+            fi = getattr(tk, "fast_info", None)
+            if fi is not None:
+                # fast_info acts like a dict-like
+                fast = dict(fi)
+        except Exception:
+            fast = {}
+
+        quote_type = (info.get("quoteType") or info.get("quote_type") or fast.get("quoteType") or "").upper()
+        if quote_type:
+            out["quoteType"] = quote_type
+
+        # Equity-like fields
+        for k in [
             "marketCap",
             "sector",
             "industry",
@@ -216,12 +248,48 @@ def fundamentals(ticker: str) -> dict:
             "shortPercentOfFloat",
             "fiftyTwoWeekLow",
             "fiftyTwoWeekHigh",
-        ]
-        for k in keep:
-            if k in info:
+        ]:
+            if k in info and info.get(k) is not None:
                 out[k] = info.get(k)
+
+        # ETF-like fields
+        for k in [
+            "fundFamily",
+            "category",
+            "totalAssets",
+            "yield",
+            "navPrice",
+            "annualReportExpenseRatio",
+        ]:
+            if k in info and info.get(k) is not None:
+                out[k] = info.get(k)
+
+        # Fallback market cap estimate
+        if "marketCap" not in out:
+            try:
+                so = info.get("sharesOutstanding")
+                lp = fast.get("last_price") or fast.get("lastPrice")
+                if so and lp:
+                    out["marketCap"] = float(so) * float(lp)
+            except Exception:
+                pass
+
+        # If sector missing, try our cached meta helper (used elsewhere in repo)
+        if ("sector" not in out) and (quote_type != "ETF"):
+            try:
+                from yf_meta import get_meta
+
+                meta = get_meta(ticker) or {}
+                if meta.get("sector"):
+                    out["sector"] = meta.get("sector")
+                if meta.get("market_cap") and ("marketCap" not in out):
+                    out["marketCap"] = meta.get("market_cap")
+            except Exception:
+                pass
+
     except Exception:
-        pass
+        return {}
+
     return out
 
 
@@ -286,10 +354,20 @@ def digest(when: str) -> None:
 
         fnd = fundamentals(t)
         if fnd:
-            sec = fnd.get("sector")
+            qt = (fnd.get("quoteType") or "").upper()
             mcap = fnd.get("marketCap")
-            pe = fnd.get("trailingPE")
-            lines.append(f"- Fund: sector={sec or 'n/a'} · mcap={mcap or 'n/a'} · PE={pe or 'n/a'}")
+            if qt == "ETF":
+                cat = fnd.get("category") or "n/a"
+                fam = fnd.get("fundFamily") or "n/a"
+                exp = fnd.get("annualReportExpenseRatio")
+                exp_str = f"{float(exp):.2%}" if isinstance(exp, (int, float)) else (str(exp) if exp is not None else "n/a")
+                lines.append(f"- Fund: type=ETF · category={cat} · family={fam} · assets={mcap or 'n/a'} · expense={exp_str}")
+            else:
+                sec = fnd.get("sector") or "n/a"
+                ind = fnd.get("industry") or "n/a"
+                pe = fnd.get("trailingPE")
+                pe_str = f"{float(pe):.2f}" if isinstance(pe, (int, float)) else (str(pe) if pe is not None else "n/a")
+                lines.append(f"- Fund: sector={sec} · industry={ind} · mcap={mcap or 'n/a'} · PE={pe_str}")
 
         # News
         nrows = news.get(t) or []
