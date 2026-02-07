@@ -218,6 +218,10 @@ def supabase_headers() -> Dict[str, str]:
     }
 
 
+def supabase_enabled() -> bool:
+    return bool(os.getenv("SUPABASE_URL")) and bool(os.getenv("SUPABASE_SERVICE_ROLE"))
+
+
 def supabase_base() -> str:
     base = os.getenv("SUPABASE_URL", "")
     if not base:
@@ -330,6 +334,41 @@ def push_pipeline_run(
         print(f"[pipeline_run] insert error: {exc}")
 
 
+def _write_local_fallback(rows: List[dict], run_id: str, date_str: str) -> Path:
+    """Persist ingested docs locally when Supabase credentials aren't available.
+
+    This keeps the RSS/news watch usable (at least for inspection) even if the
+    Supabase env vars are missing in a cron/container context.
+    """
+
+    repo = Path(__file__).resolve().parents[1]
+    out_dir = repo / "data" / "ingest_docs" / date_str
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{run_id}.jsonl"
+
+    # Store a compact subset to avoid exploding disk usage.
+    with out_path.open("w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(
+                json.dumps(
+                    {
+                        "url": r.get("url"),
+                        "source": r.get("source"),
+                        "published_at": r.get("published_at"),
+                        "observed_at": r.get("observed_at"),
+                        "content_type": r.get("content_type"),
+                        "content_hash": r.get("content_hash"),
+                        "raw_content": r.get("raw_content"),
+                        "cleaned_text": r.get("cleaned_text"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+    return out_path
+
+
 def main() -> None:
     load_env()
     started_at = dt.datetime.now(dt.timezone.utc)
@@ -420,6 +459,14 @@ def main() -> None:
         if not rows:
             print("[done] No docs after fetch/cutoff/dedupe.")
             finish("noop")
+            return
+
+        # If Supabase isn't configured in this environment, fall back to local persistence.
+        if not supabase_enabled():
+            warnings.append("Supabase env missing; wrote results to local JSONL (no remote dedupe/insert).")
+            out_path = _write_local_fallback(rows, run_id=run_id, date_str=args.date)
+            print(f"[done] Supabase not configured; wrote {len(rows)} doc(s) locally: {out_path}")
+            finish("success")
             return
 
         # Check existing in Supabase
