@@ -42,6 +42,14 @@ https://www.prnewswire.com/rss/consumer-technology-latest-news/consumer-technolo
 https://www.prnewswire.com/rss/policy-public-interest-latest-news/policy-public-interest-latest-news-list.rss
 https://www.prnewswire.com/rss/financial-services-investing-latest-news/financial-services-investing-latest-news-list.rss
 
+# Business Wire (broad)
+https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpWXg==
+
+# GlobeNewswire (broad + high-signal topic feeds)
+https://www.globenewswire.com/RssFeed/subjectcode/0   # All releases (last 20)
+https://www.globenewswire.com/RssFeed/subjectcode/78  # Exchange News (last 20)
+https://www.globenewswire.com/RssFeed/subjectcode/61  # Earnings Releases & Operating Results (last 20)
+
 # =========================
 # US — Biotech / healthcare editorial (higher-signal)
 # =========================
