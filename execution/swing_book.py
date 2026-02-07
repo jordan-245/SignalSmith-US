@@ -64,15 +64,29 @@ RISK_PER_TRADE_MAX_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MAX_PCT", "0.08")
 
 MAX_EQUITY_PER_NAME = 0.10  # hard cap on notional exposure per name
 
+# Portfolio-level risk controls
+MAX_GROSS_EXPOSURE_PCT = float(os.getenv("SWING_MAX_GROSS_EXPOSURE_PCT", "0.95"))
+MAX_SECTOR_EXPOSURE_PCT = float(os.getenv("SWING_MAX_SECTOR_EXPOSURE_PCT", "0.30"))
+MAX_DRAWDOWN_PCT = float(os.getenv("SWING_MAX_DRAWDOWN_PCT", "0.12"))
+DAILY_LOSS_LIMIT_PCT = float(os.getenv("SWING_DAILY_LOSS_LIMIT_PCT", "0.05"))
+
+# Regime-aware throttles
+RISK_OFF_ENTRY_MULT = float(os.getenv("SWING_RISK_OFF_ENTRY_MULT", "0.40"))
+RISK_OFF_MAX_POSITIONS_MULT = float(os.getenv("SWING_RISK_OFF_MAX_POSITIONS_MULT", "0.50"))
+RISK_ON_ENTRY_MULT = float(os.getenv("SWING_RISK_ON_ENTRY_MULT", "1.00"))
+
 # Time stop: exit if a position hasn't made meaningful progress after N business days.
 TIME_STOP_DAYS = int(os.getenv("SWING_TIME_STOP_DAYS", "10"))
 TIME_STOP_PROGRESS_ATR = float(os.getenv("SWING_TIME_STOP_PROGRESS_ATR", "0.5"))
 
 # Commodity proxies / related ETFs (starter set; editable)
 PROXIES = [
+    # Broad market + small-cap proxy (regime)
     "SPY",
+    "IWM",
     "VOO",
     "IVV",
+    # Macro / commodities
     "GLD",
     "SLV",
     "GDX",
@@ -670,22 +684,44 @@ def market_note(ind: pd.DataFrame) -> Tuple[str, str]:
     """Return (regime_label, detail) from a broad US index proxy.
 
     Prefers Supabase prices; falls back to yfinance if proxies are missing.
+
+    Regime logic (simple + robust):
+    - risk-on when SPY (or VOO/IVV) is above SMA200
+    - "smallcaps-leading" when IWM 60d return > SPY 60d return (if available)
     """
 
-    def from_row(sym: str, row: pd.Series) -> Tuple[str, str]:
+    def from_row(sym: str, row: pd.Series, smallcaps: str | None = None) -> Tuple[str, str]:
         r20 = float(row.get("ret20") or 0.0)
+        r60 = float(row.get("ret60") or 0.0)
         vol = float(row.get("vol20") or 0.0)
         sma200 = float(row.get("sma200") or 0.0)
         close = float(row.get("close") or 0.0)
         risk_on = bool(close > sma200) if sma200 else False
         label = "risk-on" if risk_on else "risk-off"
-        detail = f"{sym} 20d={r20:+.1%} · vol20={vol:.2%} · close>{'SMA200' if risk_on else 'SMA200? no'}"
+
+        extra = ""
+        if smallcaps:
+            extra = f" · {smallcaps}"
+
+        detail = f"{sym} 20d={r20:+.1%} · 60d={r60:+.1%} · vol20={vol:.2%} · close>{'SMA200' if risk_on else 'SMA200? no'}{extra}"
         return label, detail
+
+    # Small-cap relative strength (best-effort)
+    smallcaps_note = None
+    try:
+        spy = ind[ind["ticker"] == "SPY"]
+        iwm = ind[ind["ticker"] == "IWM"]
+        if not spy.empty and not iwm.empty:
+            spy60 = float(spy.iloc[0].get("ret60") or 0.0)
+            iwm60 = float(iwm.iloc[0].get("ret60") or 0.0)
+            smallcaps_note = ("smallcaps-leading" if iwm60 > spy60 else "smallcaps-lagging") + f" (IWM60-SPY60={iwm60 - spy60:+.1%})"
+    except Exception:
+        smallcaps_note = None
 
     for sym in ("SPY", "VOO", "IVV"):
         df = ind[ind["ticker"] == sym]
         if not df.empty:
-            return from_row(sym, df.iloc[0])
+            return from_row(sym, df.iloc[0], smallcaps=smallcaps_note)
 
     # Fallback: yfinance
     try:
@@ -707,8 +743,9 @@ def market_note(ind: pd.DataFrame) -> Tuple[str, str]:
             rets = s.pct_change()
             sma200 = s.rolling(200).mean().iloc[-1]
             r20 = (s.iloc[-1] / s.shift(20).iloc[-1] - 1.0)
+            r60 = (s.iloc[-1] / s.shift(60).iloc[-1] - 1.0) if len(s) >= 61 else 0.0
             vol20 = rets.rolling(20).std().iloc[-1]
-            row = pd.Series({"close": float(s.iloc[-1]), "sma200": float(sma200), "ret20": float(r20), "vol20": float(vol20)})
+            row = pd.Series({"close": float(s.iloc[-1]), "sma200": float(sma200), "ret20": float(r20), "ret60": float(r60), "vol20": float(vol20)})
             return from_row(sym, row)
     except Exception:
         pass
@@ -790,6 +827,36 @@ def _validate_invariants(trade_date: dt.date, held_before: Dict[str, Dict], exit
     except Exception:
         # Don’t fail the whole run on an inability to validate.
         pass
+
+
+def _fetch_equity_curve(portfolio_id: str, limit: int = 90) -> List[Dict]:
+    base = supabase_base()
+    url = f"{base}/rest/v1/paper_equity_curve"
+    params = [
+        ("select", "date,equity,cash,drawdown"),
+        ("portfolio_id", f"eq.{portfolio_id}"),
+        ("order", "date.desc"),
+        ("limit", str(limit)),
+    ]
+    r = requests.get(url, headers=supabase_headers(), params=params, timeout=20)
+    if r.status_code >= 300:
+        return []
+    return r.json() or []
+
+
+def _compute_drawdown_from_curve(curve_rows: List[Dict], current_equity: float) -> float:
+    """Compute drawdown vs peak equity in provided history (including current)."""
+    peak = 0.0
+    for row in reversed(curve_rows or []):
+        try:
+            eq = float(row.get("equity") or 0.0)
+        except Exception:
+            eq = 0.0
+        peak = max(peak, eq)
+    peak = max(peak, float(current_equity))
+    if peak <= 0:
+        return 0.0
+    return float((current_equity / peak) - 1.0)
 
 
 def run(trade_date: dt.date, mode: str = "pre") -> None:
@@ -892,10 +959,14 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         send_telegram(f"[swing] {trade_date.isoformat()} no candidates. {regime_detail}")
         return
 
+    # Regime-aware throttles
+    entry_mult = RISK_ON_ENTRY_MULT if regime_label == "risk-on" else RISK_OFF_ENTRY_MULT if regime_label == "risk-off" else 1.0
+    max_positions_eff = int(max(1, round(MAX_POSITIONS * (1.0 if regime_label == "risk-on" else RISK_OFF_MAX_POSITIONS_MULT if regime_label == "risk-off" else 1.0))))
+
     # Earnings avoid rule: do not open new positions into earnings within the next N sessions.
     pre_targets = ranked.head(80)["ticker"].tolist()  # limit API calls
     filtered, avoided = filter_earnings_avoid(pre_targets, trade_date, EARNINGS_AVOID_DAYS)
-    targets = filtered[:MAX_POSITIONS]
+    targets = filtered[:max_positions_eff]
 
     # Portfolio state
     _, positions = fetch_latest_positions(DEFAULT_PORTFOLIO_ID, trade_date.isoformat())
@@ -1023,6 +1094,40 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     # 1) Post-close catalyst adds (only in mode=post)
     # 2) Regular target buys (equal-ish allocation)
 
+    # Best-effort sector exposure tracking (for diversification constraints)
+    _meta_cache: Dict[str, Dict] = {}
+
+    def sector_etf_for(ticker: str) -> Optional[str]:
+        try:
+            from yf_meta import get_meta
+
+            if ticker not in _meta_cache:
+                _meta_cache[ticker] = get_meta(ticker) or {}
+            sector = _meta_cache[ticker].get("sector")
+            if not sector:
+                return None
+            return SECTOR_ETF.get(str(sector))
+        except Exception:
+            return None
+
+    def held_exposures(equity_now: float) -> Tuple[float, Dict[str, float]]:
+        """Return (gross_exposure_pct, sector_exposure_pct_by_etf)."""
+        gross = 0.0
+        sec: Dict[str, float] = {}
+        for t, p in held.items():
+            qty = float(p.get("qty") or 0.0)
+            if qty <= 0:
+                continue
+            px_close = daily_proxy(t) or float(p.get("avg_cost") or 0.0)
+            mv = px_close * qty
+            gross += mv
+            etf = sector_etf_for(t)
+            if etf:
+                sec[etf] = sec.get(etf, 0.0) + mv
+        if equity_now <= 0:
+            return 0.0, {}
+        return gross / equity_now, {k: v / equity_now for k, v in sec.items()}
+
     def estimate_equity_now() -> float:
         total = cash
         for t, p in held.items():
@@ -1063,6 +1168,8 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     def risk_pct_for_trade(source: str, rank_idx: int, rank_total: int, fill_price: float, atr: float) -> float:
         """Adjust risk-per-trade based on confidence + risk.
 
+        Also applies regime-based throttling (entry_mult): in risk-off, new entries are sized down.
+
         - catalyst trades start more conservative.
         - top-ranked names can get a small bump.
         - very high ATR% names get reduced risk.
@@ -1086,9 +1193,13 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         elif atr_pct >= 0.08:
             pct -= 0.01
 
-        return float(min(RISK_PER_TRADE_MAX_PCT, max(RISK_PER_TRADE_MIN_PCT, pct)))
+        pct = float(min(RISK_PER_TRADE_MAX_PCT, max(RISK_PER_TRADE_MIN_PCT, pct)))
+        # Regime throttle
+        pct = pct * float(entry_mult)
+        # Keep within min/max even after throttle
+        return float(min(RISK_PER_TRADE_MAX_PCT, max(0.0, pct)))
 
-    slots = MAX_POSITIONS - len(held)
+    slots = max_positions_eff - len(held)
     catalyst_buys = catalyst_buys[: max(0, slots)]
 
     catalyst_allocated = 0.0
@@ -1133,7 +1244,17 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         if shares <= 0:
             continue
 
-        total_notional = fill_price * shares
+        # Portfolio constraints: gross exposure + sector exposure
+        proposed_mv = float(fill_price * shares)
+        gross_pct, sector_pct = held_exposures(equity_now)
+        if (gross_pct + (proposed_mv / max(1.0, equity_now))) > MAX_GROSS_EXPOSURE_PCT:
+            continue
+        etf = sector_etf_for(t)
+        if etf:
+            if (sector_pct.get(etf, 0.0) + (proposed_mv / max(1.0, equity_now))) > MAX_SECTOR_EXPOSURE_PCT:
+                continue
+
+        total_notional = proposed_mv
         fees = total_notional * (FEES_BPS / 10_000.0)
         total_cost = total_notional + fees
         if total_cost > cash:
@@ -1188,7 +1309,17 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             if shares <= 0:
                 continue
 
-            total_notional = fill_price * shares
+            # Portfolio constraints: gross exposure + sector exposure
+            proposed_mv = float(fill_price * shares)
+            gross_pct, sector_pct = held_exposures(equity_now)
+            if (gross_pct + (proposed_mv / max(1.0, equity_now))) > MAX_GROSS_EXPOSURE_PCT:
+                continue
+            etf = sector_etf_for(t)
+            if etf:
+                if (sector_pct.get(etf, 0.0) + (proposed_mv / max(1.0, equity_now))) > MAX_SECTOR_EXPOSURE_PCT:
+                    continue
+
+            total_notional = proposed_mv
             fees = total_notional * (FEES_BPS / 10_000.0)
             total_cost = total_notional + fees
             if total_cost > cash:
@@ -1261,7 +1392,34 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     invested = float(sum(r["market_value"] for r in positions_out))
     equity = invested + cash
 
-    equity_row = {"date": trade_date.isoformat(), "portfolio_id": DEFAULT_PORTFOLIO_ID, "equity": round(equity, 6), "cash": round(cash, 6), "drawdown": 0.0, "turnover": 0.0}
+    # Drawdown + daily loss brake (risk engine)
+    curve = _fetch_equity_curve(DEFAULT_PORTFOLIO_ID, limit=120)
+    # Daily P&L proxy: compare to last equity row (if present)
+    prev_equity = None
+    if curve:
+        try:
+            prev_equity = float(curve[0].get("equity") or 0.0)
+        except Exception:
+            prev_equity = None
+
+    dd = _compute_drawdown_from_curve(curve, equity)
+    daily_ret = None
+    if prev_equity and prev_equity > 0:
+        daily_ret = (equity / prev_equity) - 1.0
+
+    equity_row = {
+        "date": trade_date.isoformat(),
+        "portfolio_id": DEFAULT_PORTFOLIO_ID,
+        "equity": round(equity, 6),
+        "cash": round(cash, 6),
+        "drawdown": round(dd, 6),
+        "turnover": 0.0,
+        "rules_json": {
+            "max_drawdown_pct": MAX_DRAWDOWN_PCT,
+            "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
+            "daily_ret": round(daily_ret, 6) if daily_ret is not None else None,
+        },
+    }
 
     # Invariants (fail hard so the scheduler notices)
     try:
@@ -1287,6 +1445,29 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         upsert("paper_fills", fills, ["fill_id"])
     upsert("paper_positions", positions_out, ["date", "portfolio_id", "ticker"])
     upsert("paper_equity_curve", [equity_row], ["date", "portfolio_id"])
+
+    # Risk brakes: if we breach drawdown or daily loss limits, pause *new entries* until review.
+    # (We already executed this run; this prevents subsequent runs from adding risk.)
+    try:
+        breach = False
+        reason = []
+        if dd <= -abs(MAX_DRAWDOWN_PCT):
+            breach = True
+            reason.append(f"drawdown {dd:.1%} <= -{abs(MAX_DRAWDOWN_PCT):.0%}")
+        if daily_ret is not None and daily_ret <= -abs(DAILY_LOSS_LIMIT_PCT):
+            breach = True
+            reason.append(f"day {daily_ret:.1%} <= -{abs(DAILY_LOSS_LIMIT_PCT):.0%}")
+        if breach:
+            from safety_controller import pause as safety_pause
+
+            safety_pause(
+                kind="risk_brake",
+                detail="; ".join(reason),
+                run_context={"date": trade_date.isoformat(), "mode": mode, "equity": equity, "drawdown": dd, "daily_ret": daily_ret},
+            )
+            send_telegram(f"[swing] RISK BRAKE engaged: {'; '.join(reason)}. Trading paused.")
+    except Exception:
+        pass
 
     # Friendlier Telegram summary (first line becomes bold via telegram_fmt)
     summary_lines = [
