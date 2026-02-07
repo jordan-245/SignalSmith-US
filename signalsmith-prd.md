@@ -14,18 +14,19 @@ tags: [signalsmith, prd, trading-bot, ml, market-data, supabase, openclaw, hosti
 _Free data stack: yfinance + RSS + HTML scraping (readability)._
 
 ## 1) Vision
-SignalSmith US is an always-on, long-only US equity system that:
-- Produces a **daily Top 10** list designed to outperform **SPY** over a **short horizon**.
-- Enforces a **minimum hold period of 5 trading days**.
-- Executes **paper trading** deterministically (VWAP-based fills), logs everything, and alerts via Telegram.
-
-In parallel, it runs an autonomous **Swing Book** (days–weeks) that:
+SignalSmith US is an always-on, long-only US equity **Swing Book** system (days–weeks) that:
 - Forms market/regime hypotheses,
 - Scans a universe of equities + commodity proxies,
-- Executes paper trades when technical conditions are satisfied,
+- Executes **paper trades** deterministically when technical conditions are satisfied,
 - Notifies the operator with rationale and risk.
 
+Supporting systems (idea formation + monitoring):
+- News ingestion (RSS/Atom + HTML fetch/clean) to surface catalysts and risks.
+- Deterministic digests (premarket + post-close) for “idea candidates”.
+
 **Paper-only by default.** Live trading remains out of scope until explicit approval gates + broker integration are implemented.
+
+> Note (scope change): The prior “Model Book (daily Top 10 vs SPY)” is intentionally de-scoped for now. This repo is swing-only; do not schedule or run the baseline/model Top-10 pipeline unless explicitly re-approved.
 
 ## 2) Core constraints (current)
 - Market: **US**
@@ -68,20 +69,16 @@ OpenClaw runs on a Hostinger VPS:
 - Self-update timer (safe FF-only pull when repo clean)
 
 ## 5) Books
-### 5.1 Model Book (Top 10)
-- Pre-open pipeline:
-  - ingest prices
-  - build features
-  - train/score baseline model
-  - generate Top 10
-  - paper trade
-
-### 5.2 Swing Book (autonomous trader)
-- Portfolio id: `swing` (separate from model book)
-- Universe: S&P 500 + commodity proxies/miners/sector ETFs (starter list in `execution/swing_book.py`).
+### 5.1 Swing Book (autonomous trader) — **only book**
+- Portfolio id: `swing`
+- Universe: equities + proxies (starter list in `execution/swing_book.py`).
 - Entry (v0): trend + momentum + risk filters.
 - Exit (v0): eligible-to-sell and (no longer a target) OR break below SMA50.
 - Execution: first-hour VWAP from yfinance 1h (fallback to daily close proxy).
+
+### 5.2 De-scoped: Model Book (daily Top 10 vs SPY)
+- Not active.
+- Baseline/model pipeline scripts may remain in the repo for future experimentation, but must not be scheduled or treated as production without explicit re-approval.
 
 ## 6) Paper execution model
 - **First-hour VWAP** fill model from yfinance 1h bars (preferred).
@@ -91,22 +88,22 @@ OpenClaw runs on a Hostinger VPS:
 ## 7) Scheduling (OpenClaw cron)
 All schedules are anchored in `America/New_York` for DST correctness unless noted.
 
-Core:
-- **Model pre-open run:** 08:45 ET, Mon–Fri
-- **Model post-close report:** 16:30 ET, Mon–Fri
-- **Approval timeout sweep:** every 5 minutes (UTC)
-
-Swing:
+Core (swing-only):
 - **Swing scan (pre-open):** 08:30 ET, Mon–Fri
 - **Swing scan (post-close):** 16:45 ET, Mon–Fri
+- **Approval timeout sweep:** every 30 minutes (UTC)
+
+Idea formation:
+- **Idea candidates digest (premarket):** 08:05 ET, Mon–Fri
+- **Idea candidates digest (post-close):** 17:05 ET, Mon–Fri
 
 News:
 - **RSS ingest:** hourly
-- **RSS feed health:** daily
-- **RSS source discovery:** weekly (proposes changes; does not auto-apply)
+- **RSS feed health:** daily (optional)
+- **RSS source discovery:** weekly (optional; proposes changes; does not auto-apply)
 
 Ops:
-- **Daily self-update:** 06:00 Brisbane time (implemented as UTC 20:00) — safe FF-only pull; skips if repo dirty; restarts gateway on update.
+- Daily self-update: de-scoped for now (only run when explicitly requested).
 
 ## 8) Supabase data model (current + target)
 Current repo uses:
