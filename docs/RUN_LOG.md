@@ -47,3 +47,8 @@ Format:
 - 2026-02-07T05:44:15+00:00 | ingest_rss | ok | feeds=55 urls=15 failures=1 rc=0
 - 2026-02-07T05:45:27+00:00 | ingest_rss | ok | feeds=55 urls=15 failures=0 rc=0
 - 2026-02-07T06:06:43+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
+- 2026-02-07T07:06:58+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
+- 2026-02-07T08:06:44+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
+- 2026-02-07T09:06:48+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
+- 2026-02-07T10:06:45+00:00 | ingest_rss | ok | feeds=55 urls=80 failures=0 rc=0
+- 2026-02-07T10:14:44+00:00 | swing_risk_grid | ok | years=2 combos=144 csv=output/backtests/swing_risk_grid_20260207101444.csv
