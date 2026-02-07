@@ -57,10 +57,11 @@ SLIPPAGE_BPS = 5
 ATR_DAYS = 14
 ATR_STOP_MULT = 2.0
 
-# Risk per position (equity-at-risk at stop). Baseline per Jordan: 5%, adjustable.
-RISK_PER_TRADE_BASE_PCT = float(os.getenv("SWING_RISK_PER_TRADE_BASE_PCT", "0.05"))
-RISK_PER_TRADE_MIN_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MIN_PCT", "0.02"))
-RISK_PER_TRADE_MAX_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MAX_PCT", "0.08"))
+# Risk per position (equity-at-risk at stop).
+# Defaults tuned from robust (gap-aware) risk grid backtest v2.
+RISK_PER_TRADE_BASE_PCT = float(os.getenv("SWING_RISK_PER_TRADE_BASE_PCT", "0.015"))
+RISK_PER_TRADE_MIN_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MIN_PCT", "0.01"))
+RISK_PER_TRADE_MAX_PCT = float(os.getenv("SWING_RISK_PER_TRADE_MAX_PCT", "0.03"))
 
 MAX_EQUITY_PER_NAME = 0.10  # hard cap on notional exposure per name
 
@@ -68,7 +69,7 @@ MAX_EQUITY_PER_NAME = 0.10  # hard cap on notional exposure per name
 MAX_GROSS_EXPOSURE_PCT = float(os.getenv("SWING_MAX_GROSS_EXPOSURE_PCT", "0.95"))
 MAX_SECTOR_EXPOSURE_PCT = float(os.getenv("SWING_MAX_SECTOR_EXPOSURE_PCT", "0.30"))
 MAX_DRAWDOWN_PCT = float(os.getenv("SWING_MAX_DRAWDOWN_PCT", "0.12"))
-DAILY_LOSS_LIMIT_PCT = float(os.getenv("SWING_DAILY_LOSS_LIMIT_PCT", "0.05"))
+DAILY_LOSS_LIMIT_PCT = float(os.getenv("SWING_DAILY_LOSS_LIMIT_PCT", "0.025"))
 
 # Regime-aware throttles
 RISK_OFF_ENTRY_MULT = float(os.getenv("SWING_RISK_OFF_ENTRY_MULT", "0.40"))
