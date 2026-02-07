@@ -798,6 +798,16 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         send_telegram(f"[swing] {trade_date.isoformat()} market closed; skipping.")
         return
 
+    # If trading is paused, exit quietly.
+    try:
+        from safety_controller import get as safety_get
+
+        st = safety_get() or {}
+        if st.get("paused"):
+            return
+    except Exception:
+        pass
+
     # Idempotency: if this mode already completed today, exit quietly.
     marker = _state_marker(trade_date, mode)
     if marker.exists():
@@ -1254,7 +1264,21 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     equity_row = {"date": trade_date.isoformat(), "portfolio_id": DEFAULT_PORTFOLIO_ID, "equity": round(equity, 6), "cash": round(cash, 6), "drawdown": 0.0, "turnover": 0.0}
 
     # Invariants (fail hard so the scheduler notices)
-    _validate_invariants(trade_date, held_before_exits, exits)
+    try:
+        _validate_invariants(trade_date, held_before_exits, exits)
+    except Exception as e:
+        # Trading-impacting: pause further swing runs until human review.
+        try:
+            from safety_controller import pause as safety_pause
+
+            safety_pause(
+                kind="swing_invariant",
+                detail=str(e),
+                run_context={"date": trade_date.isoformat(), "mode": mode, "exits": exits},
+            )
+        except Exception:
+            pass
+        raise
 
     # Persist
     if orders:
