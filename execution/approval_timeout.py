@@ -146,7 +146,11 @@ def send_telegram_summary(expired: List[dict], timeout_minutes: int) -> None:
 
 
 def telegram_enabled() -> bool:
-    return bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(os.getenv("TELEGRAM_CHAT_ID"))
+    # Allow a best-effort fallback chat id (DM the first OpenClaw allowlisted user)
+    # so ops alerts don't go silent when TELEGRAM_CHAT_ID isn't configured.
+    from telegram_fmt import get_default_chat_id
+
+    return bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(get_default_chat_id())
 
 
 def main() -> None:

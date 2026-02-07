@@ -66,3 +66,12 @@ Rules:
 - **Fix:** make missing Supabase config a hard failure (`SystemExit(2)`), and when `--notify-telegram` is set, explicitly log if Telegram env is missing so the operator knows why no message was sent.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing env → prints clear ERROR lines, exits 2.
 - **Follow-ups:** set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` in the cron/runtime environment.
+
+---
+
+## 2026-02-07T04:30:00+00:00 — Incident A7: approval timeout sweep couldn't notify Telegram when TELEGRAM_CHAT_ID missing
+- **Symptom:** `execution/approval_timeout.py --notify-telegram` errored on missing Supabase env and also printed it couldn't notify Telegram because `TELEGRAM_CHAT_ID` was unset (even though the bot token exists via OpenClaw runtime).
+- **Root cause:** the repo/runtime didn't have `TELEGRAM_CHAT_ID`; `approval_timeout.py` gated notifications on that env var and never attempted a best-effort DM.
+- **Fix:** added a fallback in `execution/telegram_fmt.py` that reads OpenClaw config (`~/.openclaw/openclaw.json`) and uses the first Telegram `allowFrom` id as a DM destination when `TELEGRAM_CHAT_ID` is missing; updated `approval_timeout.py` to treat this fallback as “telegram enabled”.
+- **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with no `SUPABASE_*` env and no `TELEGRAM_CHAT_ID` → exits 2 with clear Supabase error and attempts Telegram send via fallback DM (no "missing TELEGRAM_CHAT_ID" error path).
+- **Follow-ups:** set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE` in the cron/runtime so the sweep can actually enforce denials; set an explicit `TELEGRAM_CHAT_ID` if you want alerts to go to a group instead of DM.
