@@ -54,6 +54,11 @@ NEG_KWS = [
     "cyber incident",
 ]
 
+# For levered single-name products, also watch the underlying ticker.
+UNDERLYING_MAP = {
+    "ONDL": "ONDS",
+}
+
 POS_KWS = [
     "contract award",
     "definitive agreement",
@@ -94,7 +99,11 @@ def supabase_headers() -> Dict[str, str]:
 
 
 def fetch_news_mentions(tickers: List[str], lookback_hours: int = 24, limit: int = 200) -> Dict[str, List[dict]]:
-    """Best-effort: pull recent docs_text rows and bucket by ticker mention."""
+    """Best-effort: pull recent docs_text rows and bucket by ticker mention.
+
+    Also supports mapping leveraged products to an underlying ticker (e.g., ONDL -> ONDS).
+    """
+
     out: Dict[str, List[dict]] = {t: [] for t in tickers}
     if not tickers or not supabase_enabled():
         return out
@@ -122,7 +131,8 @@ def fetch_news_mentions(tickers: List[str], lookback_hours: int = 24, limit: int
 
     for row, txtu in zip(rows, texts_u):
         for t in tickers:
-            if mentioned(txtu, t):
+            u = UNDERLYING_MAP.get(t)
+            if mentioned(txtu, t) or (u and mentioned(txtu, u)):
                 out[t].append(row)
 
     return out
@@ -361,7 +371,9 @@ def digest(when: str) -> None:
                 fam = fnd.get("fundFamily") or "n/a"
                 exp = fnd.get("annualReportExpenseRatio")
                 exp_str = f"{float(exp):.2%}" if isinstance(exp, (int, float)) else (str(exp) if exp is not None else "n/a")
-                lines.append(f"- Fund: type=ETF · category={cat} · family={fam} · assets={mcap or 'n/a'} · expense={exp_str}")
+                und = UNDERLYING_MAP.get(t)
+                und_str = f" · underlying={und}" if und else ""
+                lines.append(f"- Fund: type=ETF · category={cat} · family={fam} · assets={mcap or 'n/a'} · expense={exp_str}{und_str}")
             else:
                 sec = fnd.get("sector") or "n/a"
                 ind = fnd.get("industry") or "n/a"
