@@ -1482,8 +1482,30 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     if len(top_targets) > 5:
         targets_line += ", " + ", ".join(top_targets[5:])
     summary_lines.append(f"- Targets: {targets_line}")
+
+    # Compact risk/regime status line (so we can see throttles + constraints at a glance)
+    try:
+        gross_pct, sector_pct = held_exposures(equity)
+        top_sector = None
+        if sector_pct:
+            top_sector = max(sector_pct.items(), key=lambda kv: kv[1])
+        top_sector_str = f"{top_sector[0]} {top_sector[1]:.0%}" if top_sector else "(n/a)"
+        dd_pct = dd  # already negative or 0
+        throttle_str = "risk-off" if regime_label == "risk-off" else "risk-on" if regime_label == "risk-on" else "unknown"
+        applied_entry_mult = entry_mult
+        applied_max_pos = max_positions_eff
+        summary_lines.append(
+            f"- Risk status: gross={gross_pct:.0%}/{MAX_GROSS_EXPOSURE_PCT:.0%} · top-sector={top_sector_str}/{MAX_SECTOR_EXPOSURE_PCT:.0%} · dd={dd_pct:.1%}/{-abs(MAX_DRAWDOWN_PCT):.0%} · day={daily_ret:.1%} (limit -{abs(DAILY_LOSS_LIMIT_PCT):.0%})" if daily_ret is not None else
+            f"- Risk status: gross={gross_pct:.0%}/{MAX_GROSS_EXPOSURE_PCT:.0%} · top-sector={top_sector_str}/{MAX_SECTOR_EXPOSURE_PCT:.0%} · dd={dd_pct:.1%}/{-abs(MAX_DRAWDOWN_PCT):.0%}"
+        )
+        summary_lines.append(
+            f"- Regime throttle: {throttle_str} · entry_mult={applied_entry_mult:.2f} · max_positions={applied_max_pos}/{MAX_POSITIONS}"
+        )
+    except Exception:
+        pass
+
     summary_lines.append(
-        f"- Risk: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_BASE_PCT:.1%} (adj {RISK_PER_TRADE_MIN_PCT:.0%}-{RISK_PER_TRADE_MAX_PCT:.0%}) · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
+        f"- Risk model: ATR{ATR_DAYS} stop={ATR_STOP_MULT:.1f}x · risk/trade={RISK_PER_TRADE_BASE_PCT:.1%} (adj {RISK_PER_TRADE_MIN_PCT:.0%}-{RISK_PER_TRADE_MAX_PCT:.0%}) · max/name={MAX_EQUITY_PER_NAME:.0%} · time-stop={TIME_STOP_DAYS}bd/{TIME_STOP_PROGRESS_ATR:.1f}ATR"
     )
     summary_lines.append("")
 
