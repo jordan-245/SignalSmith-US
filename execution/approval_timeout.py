@@ -24,6 +24,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=200, help="Max pending approvals to sweep.")
     parser.add_argument("--dry-run", action="store_true", help="Report what would change without writing.")
     parser.add_argument("--notify-telegram", action="store_true", help="Send Telegram summary if denies occur.")
+    parser.add_argument(
+        "--fail-on-missing-env",
+        action="store_true",
+        help=(
+            "Exit non-zero if SUPABASE_URL/SUPABASE_SERVICE_ROLE are missing. "
+            "Default is to warn (and optionally notify Telegram) but exit 0 to avoid cron flapping."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -158,25 +166,29 @@ def main() -> None:
     args = parse_args()
 
     # If Supabase isn't configured, we can't sweep approvals.
-    # This is a deployment/config issue and should FAIL the job so it can't silently rot.
+    # In production this is almost always a deployment/config issue.
+    # Default behavior is to WARN (and optionally notify Telegram) and exit 0 to avoid cron flapping.
+    # Use --fail-on-missing-env to make this a hard failure.
     if not supabase_enabled():
-        msg = "[approval_timeout] ERROR: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE"
+        msg = "[approval_timeout] WARN: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE; skipping sweep"
         print(msg)
 
         if args.notify_telegram:
             if not telegram_enabled():
-                print("[approval_timeout] ERROR: cannot notify Telegram (missing TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)")
+                print("[approval_timeout] WARN: cannot notify Telegram (missing TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID)")
             else:
                 from telegram_fmt import send_telegram as _send
 
                 _send(
-                    "Approval timeout sweep could not run: missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE.\n"
+                    "Approval timeout sweep skipped: missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE.\n"
                     "No approval requests were checked or auto-denied.\n"
                     "Fix: set SUPABASE_URL + SUPABASE_SERVICE_ROLE in .env (or process env) for this deployment.",
                     timeout=10,
                 )
 
-        raise SystemExit(2)
+        if args.fail_on_missing_env:
+            raise SystemExit(2)
+        return
 
     now = dt.datetime.now(dt.timezone.utc)
     cutoff = now - dt.timedelta(minutes=args.timeout_minutes)

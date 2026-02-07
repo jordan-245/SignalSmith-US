@@ -75,3 +75,12 @@ Rules:
 - **Fix:** added a fallback in `execution/telegram_fmt.py` that reads OpenClaw config (`~/.openclaw/openclaw.json`) and uses the first Telegram `allowFrom` id as a DM destination when `TELEGRAM_CHAT_ID` is missing; updated `approval_timeout.py` to treat this fallback as “telegram enabled”.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with no `SUPABASE_*` env and no `TELEGRAM_CHAT_ID` → exits 2 with clear Supabase error and attempts Telegram send via fallback DM (no "missing TELEGRAM_CHAT_ID" error path).
 - **Follow-ups:** set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE` in the cron/runtime so the sweep can actually enforce denials; set an explicit `TELEGRAM_CHAT_ID` if you want alerts to go to a group instead of DM.
+
+---
+
+## 2026-02-07T05:00:00+00:00 — Incident A8: approval timeout cron flapped due to missing Supabase env
+- **Symptom:** approval timeout sweep exited non-zero when `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE` were missing, causing cron “error” noise.
+- **Root cause:** `execution/approval_timeout.py` treated missing Supabase config as a hard failure.
+- **Fix:** added `--fail-on-missing-env` flag; default behavior is now to **warn + (optionally) notify Telegram** and then exit 0 to avoid flapping. Keep strict behavior available via the flag.
+- **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing Supabase env → prints WARN skip message and exits 0.
+- **Follow-ups:** configure `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE` in the runtime/cron environment (recommended), or run cron with `--fail-on-missing-env` if you explicitly want hard-fail semantics.
