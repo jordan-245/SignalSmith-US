@@ -1,0 +1,30 @@
+{
+  "as_of": "2026-02-07",
+  "positions": [
+    {
+      "ticker": "WDS.AX",
+      "name": "Woodside",
+      "qty": 38.0,
+      "avg_cost": 25.84,
+      "currency": "AUD"
+    },
+    {
+      "ticker": "ONDL",
+      "name": "Defiance D...",
+      "qty": 19.0,
+      "avg_cost": 30.39,
+      "currency": "USD"
+    },
+    {
+      "ticker": "XOP",
+      "name": "SPDR S&P Oil & Gas Exploration & Production ETF",
+      "qty": 10.1868,
+      "avg_cost": 142.34,
+      "currency": "USD"
+    }
+  ],
+  "alerts": {
+    "pct_move": 0.05,
+    "volume_spike_ratio": 2.0
+  }
+}
