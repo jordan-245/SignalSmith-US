@@ -39,3 +39,12 @@ Rules:
 - **Fix:** added `supabase_enabled()` guard so the sweep skips cleanly when Supabase isn’t configured (noise-control; avoids cron flaps).
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` → prints skip message, exits 0.
 - **Follow-ups:** restore Supabase env in cron/runtime so the sweep can actually enforce timeouts.
+
+---
+
+## 2026-02-07T02:29:00+00:00 — Incident A4: approval timeout sweep silently skips (no Supabase env)
+- **Symptom:** cron run logged “skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE” and exited 0, but nothing alerted (approvals were not checked).
+- **Root cause:** `approval_timeout.py` treated missing Supabase env as a quiet skip; in this deployment that’s an operational misconfiguration that should notify.
+- **Fix:** when `--notify-telegram` is set and Supabase env is missing, send a formatted Telegram warning explaining that the sweep did not run and which vars to set.
+- **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with no Supabase env → prints skip line, exits 0; Telegram warning attempted via `telegram_fmt.send_telegram()`.
+- **Follow-ups:** actually set SUPABASE_URL + SUPABASE_SERVICE_ROLE in the cron/runtime `.env` so auto-denies can occur.
