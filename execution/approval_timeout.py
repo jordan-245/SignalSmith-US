@@ -142,7 +142,7 @@ def send_telegram_summary(expired: List[dict], timeout_minutes: int) -> None:
 
     from telegram_fmt import send_telegram as _send
 
-    _send("\n".join(lines), timeout=10)
+    _send("\n".join(lines), timeout=10, warn_if_missing=True)
 
 
 def main() -> None:
@@ -161,8 +161,9 @@ def main() -> None:
                 _send(
                     "Approval timeout sweep could not run: missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE.\n"
                     "No approval requests were checked or auto-denied.\n"
-                    "Fix: set SUPABASE_URL + SUPABASE_SERVICE_ROLE in .env for this deployment.",
+                    "Fix: set SUPABASE_URL + SUPABASE_SERVICE_ROLE in .env (or process env) for this deployment.",
                     timeout=10,
+                    warn_if_missing=True,
                 )
             except Exception as exc:
                 print(f"[approval_timeout] telegram notify failed: {exc}")

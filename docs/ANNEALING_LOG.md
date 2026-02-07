@@ -48,3 +48,12 @@ Rules:
 - **Fix:** when `--notify-telegram` is set and Supabase env is missing, send a formatted Telegram warning explaining that the sweep did not run and which vars to set.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with no Supabase env → prints skip line, exits 0; Telegram warning attempted via `telegram_fmt.send_telegram()`.
 - **Follow-ups:** actually set SUPABASE_URL + SUPABASE_SERVICE_ROLE in the cron/runtime `.env` so auto-denies can occur.
+
+---
+
+## 2026-02-07T03:31:13+00:00 — Incident A5: Telegram notifications silently skipped when bot env missing
+- **Symptom:** approval timeout sweep attempted to notify Telegram on misconfiguration, but no message was sent and logs gave no hint.
+- **Root cause:** `execution/telegram_fmt.send_telegram()` returned early without logging when `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` was unset.
+- **Fix:** added `warn_if_missing` parameter (default `False` to preserve quiet behavior); approval timeout sweep now passes `warn_if_missing=True` so cron logs clearly show why Telegram didn’t send.
+- **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing env → prints `[telegram] skipped: missing TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID`.
+- **Follow-ups:** set Telegram bot env in cron/runtime so misconfig warnings reach ops.

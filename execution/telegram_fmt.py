@@ -45,10 +45,19 @@ def text_to_html(text: str) -> str:
     return "\n".join(out)
 
 
-def send_telegram(text: str, *, token: Optional[str] = None, chat_id: Optional[str] = None, timeout: int = 15) -> None:
+def send_telegram(
+    text: str,
+    *,
+    token: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    timeout: int = 15,
+    warn_if_missing: bool = False,
+) -> None:
     bot_token = token or os.getenv("TELEGRAM_BOT_TOKEN", "")
     to = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
     if not bot_token or not to:
+        if warn_if_missing:
+            print("[telegram] skipped: missing TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID")
         return
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
