@@ -71,11 +71,29 @@ https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/disco/rss.xml
 https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/drug-safety-podcast/rss.xml
 # https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/food-safety-recalls/rss.xml
 
+# Cyber / exploit catalysts (small-caps react fast)
+# CISA KEV data (GitHub Atom; reliable vs cisa.gov RSS which is often Akamai-blocked)
+https://github.com/cisagov/kev-data/releases.atom
+
+# Cyber news (broad, but fast)
+https://www.bleepingcomputer.com/feed/
+https://thehackernews.com/feeds/posts/default?alt=rss
+https://krebsonsecurity.com/feed/
+
 # Federal Register (agency Atom)
 https://www.federalregister.gov/agencies/securities-and-exchange-commission.atom
 https://www.federalregister.gov/agencies/food-and-drug-administration.atom
 https://www.federalregister.gov/agencies/centers-for-medicare-medicaid-services.atom
 https://www.federalregister.gov/agencies/department-of-health-and-human-services.atom
+
+# SEC press / litigation releases
+# NOTE: endpoints move and are sometimes blocked/rate-limited. Keep commented unless we confirm stable URLs.
+# https://www.sec.gov/rss/press-release.xml
+# https://www.sec.gov/rss/litigation/litreleases.xml
+
+# DOJ press releases
+# NOTE: justice.gov is often Akamai-protected (403/JS challenge) from servers. Keeping commented.
+# https://www.justice.gov/feeds/opa/justice-news.xml
 
 # NIH news releases
 # https://www.nih.gov/news-events/news-releases/rss.xml  # 404 currently

@@ -12,6 +12,13 @@ www.fda.gov
 fda.gov
 www.federalregister.gov
 federalregister.gov
+github.com
+www.bleepingcomputer.com
+bleepingcomputer.com
+thehackernews.com
+www.thehackernews.com
+krebsonsecurity.com
+www.krebsonsecurity.com
 
 # Press release wires (selected high-signal)
 www.globenewswire.com
