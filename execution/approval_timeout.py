@@ -33,6 +33,10 @@ def load_env() -> None:
         load_dotenv(env_path)
 
 
+def supabase_enabled() -> bool:
+    return bool(os.getenv("SUPABASE_URL")) and bool(os.getenv("SUPABASE_SERVICE_ROLE"))
+
+
 def supabase_base() -> str:
     base = os.getenv("SUPABASE_URL", "")
     if not base:
@@ -144,6 +148,12 @@ def send_telegram_summary(expired: List[dict], timeout_minutes: int) -> None:
 def main() -> None:
     load_env()
     args = parse_args()
+
+    # Noise control: if Supabase isn't configured in this runtime, skip cleanly.
+    if not supabase_enabled():
+        print("[approval_timeout] skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE")
+        return
+
     now = dt.datetime.now(dt.timezone.utc)
     cutoff = now - dt.timedelta(minutes=args.timeout_minutes)
     expired = fetch_expired(cutoff, args.limit)
