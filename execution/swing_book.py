@@ -749,6 +749,49 @@ def _state_marker(trade_date: dt.date, mode: str) -> Path:
     return STATE_DIR / f"swing_book_{trade_date.isoformat()}_{mode}.done"
 
 
+def _validate_invariants(trade_date: dt.date, held_before: Dict[str, Dict], exits: List[Tuple[str, str]]) -> None:
+    """Hard safety checks. If violated, raise so the scheduler flags the run."""
+
+    # Invariant: no rotate/time exits before eligible sell date.
+    bad: List[str] = []
+    for t, reason in exits:
+        if reason in ("rotate", "time"):
+            p = held_before.get(t) or {}
+            if not eligible_to_sell(p, trade_date):
+                bad.append(f"{t}:{reason} (ineligible)")
+    if bad:
+        raise RuntimeError("Invariant violated: attempted early exit(s): " + ", ".join(bad))
+
+    # Invariant: at most 1 order per ticker+side+date (paper_orders has no portfolio_id)
+    # If violated, treat as duplication bug.
+    try:
+        base = supabase_base()
+        url = f"{base}/rest/v1/paper_orders"
+        params = [
+            ("select", "ticker,side,order_id"),
+            ("date", f"eq.{trade_date.isoformat()}"),
+            ("limit", "2000"),
+        ]
+        resp = requests.get(url, headers=supabase_headers(), params=params, timeout=20)
+        if resp.status_code < 300:
+            rows = resp.json() or []
+            counts: Dict[Tuple[str, str], List[str]] = {}
+            for r in rows:
+                k = (str(r.get("ticker") or ""), str(r.get("side") or ""))
+                oid = str(r.get("order_id") or "")
+                if k[0] and k[1] and oid:
+                    counts.setdefault(k, []).append(oid)
+            dup = {k: v for k, v in counts.items() if len(v) > 1}
+            if dup:
+                sample = "; ".join([f"{k[0]} {k[1]} x{len(v)}" for k, v in list(dup.items())[:8]])
+                raise RuntimeError("Invariant violated: duplicate orders detected: " + sample)
+    except RuntimeError:
+        raise
+    except Exception:
+        # Don’t fail the whole run on an inability to validate.
+        pass
+
+
 def run(trade_date: dt.date, mode: str = "pre") -> None:
     # Skip weekends/holidays so the cron schedule is safe.
     if not market_is_open(trade_date.isoformat()):
@@ -861,6 +904,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     # - Stop-loss breach exits immediately (even if not yet eligible to sell)
     # - Time stop: if held long enough with insufficient progress, exit once eligible
     # - Otherwise, if eligible and (no longer in targets OR close below SMA50)
+    held_before_exits = dict(held)
     exits: List[Tuple[str, str]] = []  # (ticker, reason)
     for t, p in held.items():
         row = ind[ind["ticker"] == t]
@@ -1208,6 +1252,9 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
     equity = invested + cash
 
     equity_row = {"date": trade_date.isoformat(), "portfolio_id": DEFAULT_PORTFOLIO_ID, "equity": round(equity, 6), "cash": round(cash, 6), "drawdown": 0.0, "turnover": 0.0}
+
+    # Invariants (fail hard so the scheduler notices)
+    _validate_invariants(trade_date, held_before_exits, exits)
 
     # Persist
     if orders:
