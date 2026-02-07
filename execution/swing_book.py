@@ -540,7 +540,7 @@ def fetch_latest_positions(portfolio_id: str, before_date: str) -> Tuple[str | N
     last_date = rows[0]["date"]
 
     params2 = [
-        ("select", "date,portfolio_id,ticker,qty,avg_cost,market_value,entry_date,eligible_sell_date"),
+        ("select", "date,portfolio_id,ticker,qty,avg_cost,market_value,entry_date,eligible_sell_date,rules_json"),
         ("portfolio_id", f"eq.{portfolio_id}"),
         ("date", f"eq.{last_date}"),
         ("order", "ticker.asc"),
@@ -618,6 +618,24 @@ def upsert(table: str, rows: List[Dict], conflict_cols: List[str]) -> None:
         raise RuntimeError(f"{table} upsert failed (retry): {resp2.status_code} {resp2.text}")
 
     raise RuntimeError(f"{table} upsert failed: {resp.status_code} {resp.text}")
+
+
+def fetch_recent_docs_recent(limit: int = 400, lookback_days: int = 3) -> List[Dict]:
+    """Fetch recent cleaned docs (joined to docs_raw) for batch catalyst scoring."""
+    base = supabase_base()
+    url = f"{base}/rest/v1/docs_text"
+    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=lookback_days)).isoformat()
+    select = "doc_id,cleaned_text,docs_raw!inner(url,source,published_at,observed_at)"
+    params = [
+        ("select", select),
+        ("docs_raw.observed_at", f"gte.{since}"),
+        ("order", "docs_raw(observed_at).desc"),
+        ("limit", str(limit)),
+    ]
+    r = requests.get(url, headers=supabase_headers(), params=params, timeout=25)
+    if r.status_code >= 300:
+        return []
+    return r.json() or []
 
 
 def fetch_recent_docs_for_ticker(ticker: str, since_date: dt.date, limit: int = 5) -> List[Dict]:
@@ -948,8 +966,56 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         if "avg_dollar_vol20" in cand.columns:
             cand = cand[(cand["avg_dollar_vol20"].isna()) | (cand["avg_dollar_vol20"].astype(float) >= MIN_AVG_DOLLAR_VOL)]
 
-        # Sector leadership boost (small)
-        cand["score"] = cand["score"] + 0.20 * cand["sector_rs"].fillna(0.0)
+        # Catalyst scoring (batch): boost/penalize based on recent docs mentioning the ticker.
+        docs = fetch_recent_docs_recent(limit=400, lookback_days=3)
+        texts_u = [(d.get("cleaned_text") or "")[:3500].upper() for d in (docs or [])]
+
+        cat_scores: Dict[str, float] = {}
+        if texts_u:
+            POS = [
+                "CONTRACT AWARD",
+                "DEFINITIVE AGREEMENT",
+                "STRATEGIC ALTERNATIVES",
+                "UPGRADE",
+                "PRICE TARGET RAISED",
+                "RAISES GUIDANCE",
+                "BEATS ESTIMATES",
+            ]
+            NEG = [
+                "REGISTERED DIRECT",
+                "PUBLIC OFFERING",
+                "AT-THE-MARKET",
+                "ATM PROGRAM",
+                "PRIVATE PLACEMENT",
+                "WARRANT",
+                "DILUTION",
+                "RESTATEMENT",
+                "SEC INVESTIGATION",
+                "GOING CONCERN",
+                "CHAPTER 11",
+                "BANKRUPTCY",
+                "DELIST",
+            ]
+
+            def mentioned(txt: str, t: str) -> bool:
+                return (f"${t}" in txt) or (f" {t} " in txt) or (f"({t})" in txt)
+
+            for t in cand["ticker"].tolist():
+                rel = [txt for txt in texts_u if mentioned(txt, t)]
+                if not rel:
+                    cat_scores[t] = 0.0
+                    continue
+                # Count keywords only within docs that mention the ticker.
+                blob_u = "\n".join(rel)
+                pos = sum(blob_u.count(w) for w in POS)
+                neg = sum(blob_u.count(w) for w in NEG)
+                # Lightweight score: mostly penalize dilution/distress.
+                cat_scores[t] = float(0.20 * pos - 0.35 * neg)
+
+        cand["catalyst_score"] = [cat_scores.get(t, 0.0) for t in cand["ticker"].tolist()]
+
+        # Sector leadership boost (small) + catalyst score
+        cand["score"] = cand["score"] + 0.20 * cand["sector_rs"].fillna(0.0) + cand["catalyst_score"].fillna(0.0)
 
         ranked = cand.sort_values("score", ascending=False)
     except Exception:
@@ -982,38 +1048,101 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         return float(avg_cost) - ATR_STOP_MULT * float(atr)
 
     # Decide exits:
-    # - Stop-loss breach exits immediately (even if not yet eligible to sell)
+    # - Hard stop-loss breach exits immediately (even if not yet eligible to sell)
+    # - Trailing stop (uses high-watermark since entry) exits immediately if hit
+    # - Partial profit-taking (once eligible): scale out at +2 ATR from entry
     # - Time stop: if held long enough with insufficient progress, exit once eligible
     # - Otherwise, if eligible and (no longer in targets OR close below SMA50)
+
     held_before_exits = dict(held)
-    exits: List[Tuple[str, str]] = []  # (ticker, reason)
-    for t, p in held.items():
+    exits: List[Tuple[str, str]] = []  # (ticker, reason) full exit
+    partial_sells: List[Tuple[str, float, str]] = []  # (ticker, qty, reason)
+
+    # Build high-watermarks from Supabase price window (cheap) for held names.
+    px_map: Dict[str, pd.DataFrame] = {}
+    if not px.empty:
+        for t, g in px.groupby("ticker"):
+            px_map[str(t)] = g.sort_values("date")
+
+    def high_since_entry(ticker: str, entry_iso: str) -> Optional[float]:
+        try:
+            ed = pd.to_datetime(entry_iso)
+        except Exception:
+            return None
+        g = px_map.get(ticker)
+        if g is None or g.empty:
+            return None
+        g2 = g[g["date"] >= ed]
+        if g2.empty:
+            return None
+        try:
+            return float(g2["px"].astype(float).max())
+        except Exception:
+            return None
+
+    for t, p in list(held.items()):
         row = ind[ind["ticker"] == t]
         close_px = float(row.iloc[0]["close"]) if not row.empty else None
 
+        qty = float(p.get("qty") or 0.0)
+        if qty <= 0:
+            continue
+
         avg_cost = float(p.get("avg_cost") or 0.0)
+        atr_now = None
+        if not row.empty:
+            v = row.iloc[0].get("atr14")
+            if v is not None and not pd.isna(v):
+                atr_now = float(v)
+
+        # Hard stop
         st = stop_level(t, avg_cost)
         if close_px is not None and st is not None and close_px <= st:
             exits.append((t, "stop"))
             continue
 
+        # Trailing stop (only if we have ATR + entry date)
+        entry_iso = str(p.get("entry_date") or "")
+        if close_px is not None and atr_now is not None and entry_iso:
+            hi = high_since_entry(t, entry_iso)
+            if hi is not None:
+                trail = float(hi) - ATR_STOP_MULT * float(atr_now)
+                # Only activate trailing after some progress (avoids immediate whipsaw)
+                if float(hi) >= (avg_cost + 1.0 * float(atr_now)) and close_px <= trail:
+                    exits.append((t, "trail"))
+                    continue
+
+        # From here: only eligible-to-sell logic
         if not eligible_to_sell(p, trade_date):
             continue
 
+        # Partial profit-taking: scale out 50% at +2 ATR from entry
+        if close_px is not None and atr_now is not None and qty >= 2:
+            tp_level = avg_cost + 2.0 * float(atr_now)
+            already_scaled = False
+            try:
+                rj = p.get("rules_json") or {}
+                already_scaled = bool((rj.get("scaled_out") is True) or (rj.get("take_profit_2atr") is True))
+            except Exception:
+                already_scaled = False
+
+            if (not already_scaled) and close_px >= tp_level:
+                partial_qty = math.floor(qty / 2.0)
+                if partial_qty >= 1:
+                    partial_sells.append((t, float(partial_qty), "take_profit"))
+
         # Time stop: after TIME_STOP_DAYS business days, if no meaningful progress, exit.
         try:
-            entry_date = dt.date.fromisoformat(str(p.get("entry_date")))
+            entry_date = dt.date.fromisoformat(entry_iso) if entry_iso else None
         except Exception:
             entry_date = None
         if entry_date is not None:
             held_days = int(np.busday_count(entry_date.isoformat(), trade_date.isoformat()))
-            if held_days >= TIME_STOP_DAYS and close_px is not None and not row.empty:
-                atr_now = row.iloc[0].get("atr14")
-                if atr_now is not None and not pd.isna(atr_now):
-                    thresh = avg_cost + TIME_STOP_PROGRESS_ATR * float(atr_now)
-                    if close_px < thresh:
-                        exits.append((t, "time"))
-                        continue
+            if held_days >= TIME_STOP_DAYS and close_px is not None and atr_now is not None:
+                thresh = avg_cost + TIME_STOP_PROGRESS_ATR * float(atr_now)
+                if close_px < thresh:
+                    exits.append((t, "time"))
+                    continue
 
         below = False
         if close_px is not None and not row.empty:
@@ -1047,7 +1176,60 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         # ohlc proxy not available here; use close as conservative
         return float(r.iloc[0]["close"])
 
-    # Sells
+    # Partial sells (take-profit scaling)
+    for t, qty_part, reason in partial_sells:
+        if fetch_existing_order_ids(trade_date, t, "sell"):
+            # If something already sold today, don't double-sell.
+            continue
+        if t not in held:
+            continue
+        qty = float(qty_part)
+        if qty <= 0 or qty >= float(held[t].get("qty") or 0.0):
+            continue
+        vwap = first_hour_vwap_yf_1h(t, trade_date.isoformat()) or daily_proxy(t)
+        if vwap is None:
+            continue
+        fill_price = vwap * (1 - SLIPPAGE_BPS / 10_000.0)
+        notional = fill_price * qty
+        fees = notional * (FEES_BPS / 10_000.0)
+        cash += notional - fees
+
+        row = ind[ind["ticker"] == t]
+        bench_px = float(row.iloc[0]["close"]) if not row.empty else fill_price
+        impl_shortfall_per_share = (bench_px - fill_price)
+
+        order_id = f"{run_id}-SELL-PART-{t}"
+        orders.append({
+            "order_id": order_id,
+            "date": trade_date.isoformat(),
+            "ticker": t,
+            "side": "sell",
+            "target_weight": 0.0,
+            "qty_estimate": qty,
+            "status": "filled",
+            "rules_json": {
+                "benchmark_price": round(bench_px, 6),
+                "benchmark_method": "last_close_available",
+                "fill_price": round(fill_price, 6),
+                "implementation_shortfall_per_share": round(impl_shortfall_per_share, 6),
+                "implementation_shortfall_dollars": round(impl_shortfall_per_share * qty, 2),
+                "source": f"partial_{reason}",
+            },
+        })
+        fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
+
+        # Reduce held qty and mark scaled_out in rules_json (persisted later in positions_out)
+        held_qty = float(held[t].get("qty") or 0.0)
+        held[t]["qty"] = max(0.0, held_qty - qty)
+        try:
+            rj = held[t].get("rules_json") or {}
+            rj["scaled_out"] = True
+            rj["take_profit_2atr"] = True
+            held[t]["rules_json"] = rj
+        except Exception:
+            pass
+
+    # Full sells
     for t, reason in exits:
         # De-dupe: if we already placed a sell for this ticker today, skip.
         if fetch_existing_order_ids(trade_date, t, "sell"):
@@ -1269,7 +1451,14 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
         fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
 
         eligible_sell_date = (pd.Timestamp(trade_date) + pd.tseries.offsets.BDay(MIN_HOLD_DAYS)).date()
-        held[t] = {"ticker": t, "qty": shares, "avg_cost": fill_price, "entry_date": trade_date.isoformat(), "eligible_sell_date": eligible_sell_date.isoformat()}
+        held[t] = {
+            "ticker": t,
+            "qty": shares,
+            "avg_cost": fill_price,
+            "entry_date": trade_date.isoformat(),
+            "eligible_sell_date": eligible_sell_date.isoformat(),
+            "rules_json": {"scaled_out": False, "take_profit_2atr": False},
+        }
 
     # Regular buys (from targets not held), sized by risk using ATR stop.
     buys = entries[: max(0, slots)]
@@ -1355,7 +1544,14 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             fills.append({"fill_id": f"{order_id}-FILL", "order_id": order_id, "fill_price": round(fill_price, 6), "fill_method": "first_hour_vwap_1h_yfinance", "slippage_bps": SLIPPAGE_BPS, "fees": round(fees, 6), "filled_at": dt.datetime.now(dt.timezone.utc).isoformat()})
 
             eligible_sell_date = (pd.Timestamp(trade_date) + pd.tseries.offsets.BDay(MIN_HOLD_DAYS)).date()
-            held[t] = {"ticker": t, "qty": shares, "avg_cost": fill_price, "entry_date": trade_date.isoformat(), "eligible_sell_date": eligible_sell_date.isoformat()}
+            held[t] = {
+                "ticker": t,
+                "qty": shares,
+                "avg_cost": fill_price,
+                "entry_date": trade_date.isoformat(),
+                "eligible_sell_date": eligible_sell_date.isoformat(),
+                "rules_json": {"scaled_out": False, "take_profit_2atr": False},
+            }
 
     # Mark positions using latest close
     positions_out: List[Dict] = []
@@ -1372,6 +1568,12 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
                 atr_now = float(v)
         avg_cost = float(p.get("avg_cost") or 0.0)
         st_indic = stop_level(t, avg_cost)
+        prev_rj = {}
+        try:
+            prev_rj = p.get("rules_json") or {}
+        except Exception:
+            prev_rj = {}
+
         positions_out.append({
             "date": trade_date.isoformat(),
             "portfolio_id": DEFAULT_PORTFOLIO_ID,
@@ -1382,6 +1584,7 @@ def run(trade_date: dt.date, mode: str = "pre") -> None:
             "entry_date": p.get("entry_date"),
             "eligible_sell_date": p.get("eligible_sell_date"),
             "rules_json": {
+                **(prev_rj if isinstance(prev_rj, dict) else {}),
                 "atr14_now": round(atr_now, 6) if atr_now is not None else None,
                 "stop_price_indicative": round(st_indic, 6) if st_indic is not None else None,
                 "time_stop_days": TIME_STOP_DAYS,
