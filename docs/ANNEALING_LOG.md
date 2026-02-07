@@ -21,3 +21,12 @@ Rules:
 - Context: RSS ingest hung on IPv6 SYN-SENT connect; no output for ~1m+
 - Change: requests.get timeout now uses (connect, read) tuple: (min(5,t), t) in execution/ingest_rss.py
 - Validation: reran ingest_rss (max-items 80) -> exit code 0
+
+---
+
+## 2026-02-07T01:10:47+00:00 — Incident A2: ingest_docs crashes when Supabase env missing
+- **Symptom:** `execution/ingest_rss.py` discovers URLs but `execution/ingest_docs.py` aborts with `RuntimeError: SUPABASE_URL not set`.
+- **Root cause:** repo has no `.env` in this runtime, so Supabase credentials are unavailable; `ingest_docs.py` attempted remote dedupe/insert anyway.
+- **Fix:** added a `supabase_enabled()` guard and a local JSONL fallback writer (`data/ingest_docs/<date>/<run_id>.jsonl`) so the job completes without Supabase.
+- **Validation:** ran `./.venv/bin/python -u execution/ingest_rss.py --max-items 3` → wrote local JSONL + exited cleanly.
+- **Follow-ups:** restore Supabase env in cron/runtime (so remote storage + dedupe works again); consider making missing Supabase a hard alert in ops status.
