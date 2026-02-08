@@ -27,6 +27,11 @@ from pathlib import Path
 from typing import List
 from urllib.parse import urlparse
 
+# Add execution/ to path for journal import
+_exec_dir = Path(__file__).resolve().parent
+if str(_exec_dir) not in sys.path:
+    sys.path.insert(0, str(_exec_dir))
+
 import feedparser
 import requests
 
@@ -69,7 +74,7 @@ def load_feeds(args: argparse.Namespace) -> List[str]:
     return uniq
 
 
-def discover_urls(feed_url: str, timeout: int) -> List[str]:
+def discover_urls(feed_url: str, timeout: int, verbose: bool = True) -> List[str]:
     """Fetch + parse an RSS/Atom feed with a real timeout.
 
     feedparser's built-in URL fetching can hang depending on the environment;
@@ -80,13 +85,17 @@ def discover_urls(feed_url: str, timeout: int) -> List[str]:
 
     def _timeout_for(url: str) -> int:
         host = urlparse(url).netloc.lower()
-        if host.endswith("nasdaq.com"):
-            return max(timeout, 30)
+        # Reduce sec.gov timeout — these feeds frequently stall on IPv6/SSL negotiation
         if host.endswith("sec.gov"):
+            return min(timeout, 12)
+        if host.endswith("nasdaq.com"):
             return max(timeout, 30)
         return timeout
 
     ua = {"User-Agent": "SignalSmith/0.1 (rss-discovery; +https://srv1281557.hstgr.cloud; research bot)"}
+
+    if verbose:
+        print(f"[rss] Fetching: {feed_url}")
 
     last_exc: Exception | None = None
     for attempt in range(1, 3 + 1):
@@ -94,7 +103,7 @@ def discover_urls(feed_url: str, timeout: int) -> List[str]:
             t = _timeout_for(feed_url)
             # Use explicit (connect, read) timeouts. Some hosts stall IPv6 connects
             # and can ignore a single total timeout depending on the underlying socket behavior.
-            resp = requests.get(feed_url, headers=ua, timeout=(min(5, t), t))
+            resp = requests.get(feed_url, headers=ua, timeout=(5, t))
             resp.raise_for_status()
             parsed = feedparser.parse(resp.content)
 
@@ -105,6 +114,8 @@ def discover_urls(feed_url: str, timeout: int) -> List[str]:
                     continue
                 if link not in urls:
                     urls.append(link)
+            if verbose:
+                print(f"[rss]   → {len(urls)} URL(s)")
             return urls
         except Exception as exc:
             last_exc = exc
@@ -114,6 +125,8 @@ def discover_urls(feed_url: str, timeout: int) -> List[str]:
 
                 time.sleep(1.5 * attempt)
 
+    if verbose:
+        print(f"[rss]   → FAILED ({last_exc})")
     raise last_exc or RuntimeError("Failed to fetch feed")
 
 
@@ -124,16 +137,18 @@ def main() -> None:
         print("[rss] No feeds configured.")
         return
 
+    print(f"[rss] Loaded {len(feeds)} feed(s)")
     urls: List[str] = []
     feed_failures = 0
-    for f in feeds:
+    for idx, f in enumerate(feeds, 1):
         try:
-            for u in discover_urls(f, args.timeout):
+            print(f"[rss] [{idx}/{len(feeds)}] {f}")
+            for u in discover_urls(f, args.timeout, verbose=True):
                 if u not in urls:
                     urls.append(u)
         except Exception as exc:
             feed_failures += 1
-            print(f"[rss] feed failed: {f} ({exc})")
+            print(f"[rss]   → FAILED: {exc}")
 
     if not urls:
         journal_run("ingest_rss", "ok", f"feeds={len(feeds)} urls=0 failures={feed_failures}")

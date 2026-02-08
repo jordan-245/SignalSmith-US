@@ -37,4 +37,5 @@ Collect web documents (news, filings, reports, holdings pages) and persist raw c
 5. Log counts/errors.
 
 ## Learnings / Updates
-- 
+- **2026-02-08**: Dependency issue resolved - `beautifulsoup4` was listed in requirements.txt but needed explicit venv activation. Created `check_new_docs.py` to track ingestion cadence and `preflight_check.py` to verify script imports before pipeline runs.
+- All execution scripts require activating the venv: `source .venv/bin/activate` before running any Python scripts in the execution layer.
