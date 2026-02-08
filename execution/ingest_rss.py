@@ -85,9 +85,9 @@ def discover_urls(feed_url: str, timeout: int, verbose: bool = True) -> List[str
 
     def _timeout_for(url: str) -> int:
         host = urlparse(url).netloc.lower()
-        # Reduce sec.gov timeout — these feeds frequently stall on IPv6/SSL negotiation
-        if host.endswith("sec.gov"):
-            return min(timeout, 12)
+        # Reduce sec.gov/federalregister.gov timeout — these feeds frequently stall on IPv6/SSL negotiation
+        if host.endswith("sec.gov") or host.endswith("federalregister.gov"):
+            return min(timeout, 10)
         if host.endswith("nasdaq.com"):
             return max(timeout, 30)
         return timeout
