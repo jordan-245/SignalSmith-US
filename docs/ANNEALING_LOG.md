@@ -35,16 +35,16 @@ Rules:
 
 ## 2026-02-07T01:31:13+00:00 — Incident A3: approval timeout sweep fails when Supabase env missing
 - **Symptom:** `execution/approval_timeout.py` crashed with `RuntimeError: SUPABASE_URL not set`.
-- **Root cause:** Supabase credentials are not present in this runtime (no `.env`, and cron environment didn’t provide `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE`).
-- **Fix:** added `supabase_enabled()` guard so the sweep skips cleanly when Supabase isn’t configured (noise-control; avoids cron flaps).
+- **Root cause:** Supabase credentials are not present in this runtime (no `.env`, and cron environment didn't provide `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE`).
+- **Fix:** added `supabase_enabled()` guard so the sweep skips cleanly when Supabase isn't configured (noise-control; avoids cron flaps).
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` → prints skip message, exits 0.
 - **Follow-ups:** restore Supabase env in cron/runtime so the sweep can actually enforce timeouts.
 
 ---
 
 ## 2026-02-07T02:29:00+00:00 — Incident A4: approval timeout sweep silently skips (no Supabase env)
-- **Symptom:** cron run logged “skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE” and exited 0, but nothing alerted (approvals were not checked).
-- **Root cause:** `approval_timeout.py` treated missing Supabase env as a quiet skip; in this deployment that’s an operational misconfiguration that should notify.
+- **Symptom:** cron run logged "skipped: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE" and exited 0, but nothing alerted (approvals were not checked).
+- **Root cause:** `approval_timeout.py` treated missing Supabase env as a quiet skip; in this deployment that's an operational misconfiguration that should notify.
 - **Fix:** when `--notify-telegram` is set and Supabase env is missing, send a formatted Telegram warning explaining that the sweep did not run and which vars to set.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with no Supabase env → prints skip line, exits 0; Telegram warning attempted via `telegram_fmt.send_telegram()`.
 - **Follow-ups:** actually set SUPABASE_URL + SUPABASE_SERVICE_ROLE in the cron/runtime `.env` so auto-denies can occur.
@@ -54,7 +54,7 @@ Rules:
 ## 2026-02-07T03:31:13+00:00 — Incident A5: Telegram notifications silently skipped when bot env missing
 - **Symptom:** approval timeout sweep attempted to notify Telegram on misconfiguration, but no message was sent and logs gave no hint.
 - **Root cause:** `execution/telegram_fmt.send_telegram()` returned early without logging when `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` was unset.
-- **Fix:** added `warn_if_missing` parameter (default `False` to preserve quiet behavior); approval timeout sweep now passes `warn_if_missing=True` so cron logs clearly show why Telegram didn’t send.
+- **Fix:** added `warn_if_missing` parameter (default `False` to preserve quiet behavior); approval timeout sweep now passes `warn_if_missing=True` so cron logs clearly show why Telegram didn't send.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing env → prints `[telegram] skipped: missing TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID`.
 - **Follow-ups:** set Telegram bot env in cron/runtime so misconfig warnings reach ops.
 
@@ -72,15 +72,32 @@ Rules:
 ## 2026-02-07T04:30:00+00:00 — Incident A7: approval timeout sweep couldn't notify Telegram when TELEGRAM_CHAT_ID missing
 - **Symptom:** `execution/approval_timeout.py --notify-telegram` errored on missing Supabase env and also printed it couldn't notify Telegram because `TELEGRAM_CHAT_ID` was unset (even though the bot token exists via OpenClaw runtime).
 - **Root cause:** the repo/runtime didn't have `TELEGRAM_CHAT_ID`; `approval_timeout.py` gated notifications on that env var and never attempted a best-effort DM.
-- **Fix:** added a fallback in `execution/telegram_fmt.py` that reads OpenClaw config (`~/.openclaw/openclaw.json`) and uses the first Telegram `allowFrom` id as a DM destination when `TELEGRAM_CHAT_ID` is missing; updated `approval_timeout.py` to treat this fallback as “telegram enabled”.
+- **Fix:** added a fallback in `execution/telegram_fmt.py` that reads OpenClaw config (`~/.openclaw/openclaw.json`) and uses the first Telegram `allowFrom` id as a DM destination when `TELEGRAM_CHAT_ID` is missing; updated `approval_timeout.py` to treat this fallback as "telegram enabled".
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with no `SUPABASE_*` env and no `TELEGRAM_CHAT_ID` → exits 2 with clear Supabase error and attempts Telegram send via fallback DM (no "missing TELEGRAM_CHAT_ID" error path).
 - **Follow-ups:** set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE` in the cron/runtime so the sweep can actually enforce denials; set an explicit `TELEGRAM_CHAT_ID` if you want alerts to go to a group instead of DM.
 
 ---
 
 ## 2026-02-07T05:00:00+00:00 — Incident A8: approval timeout cron flapped due to missing Supabase env
-- **Symptom:** approval timeout sweep exited non-zero when `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE` were missing, causing cron “error” noise.
+- **Symptom:** approval timeout sweep exited non-zero when `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE` were missing, causing cron "error" noise.
 - **Root cause:** `execution/approval_timeout.py` treated missing Supabase config as a hard failure.
 - **Fix:** added `--fail-on-missing-env` flag; default behavior is now to **warn + (optionally) notify Telegram** and then exit 0 to avoid flapping. Keep strict behavior available via the flag.
 - **Validation:** ran `./.venv/bin/python execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` with missing Supabase env → prints WARN skip message and exits 0.
 - **Follow-ups:** configure `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE` in the runtime/cron environment (recommended), or run cron with `--fail-on-missing-env` if you explicitly want hard-fail semantics.
+
+---
+
+## 2026-02-08T18:05:00+10:00 — Incident A9: RSS ingest hung without output (missing module + feed timeout)
+- **Symptom:** cron job `ingest_rss.py` timed out at 120s with no output; no feeds were fetched.
+- **Root cause:** 
+  1. Script failed to import `journal` module because `execution/` wasn't in `sys.path`
+  2. SEC.gov and federalregister.gov feeds stalled on IPv6/SSL negotiation (10-12s+ each)
+- **Fix:** 
+  1. Added `sys.path.insert(0, execution/)` before importing `journal`
+  2. Added verbose progress logging (`print(f"[rss] Fetching: {feed_url}")`) to show which feed is active
+  3. Reduced timeout for `.sec.gov` and `.federalregister.gov` feeds from 15s→10-12s
+  4. Changed `requests.get` timeout from single value to tuple `(5, t)` for explicit connect timeout
+- **Validation:** Ran `./.venv/bin/python execution/ingest_rss.py --feeds-file directives/rss_sources.txt --max-items 80` → all 55 feeds completed, discovered 80 URLs, handed off to `ingest_docs.py`, exit code 0.
+- **Follow-ups:** Monitor next cron run to confirm it completes within timeout; consider further reducing timeout for chronic stragglers or skipping them entirely if they continue to stall.
+
+---
