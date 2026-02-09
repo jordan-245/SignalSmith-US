@@ -101,3 +101,14 @@ Rules:
 - **Follow-ups:** Monitor next cron run to confirm it completes within timeout; consider further reducing timeout for chronic stragglers or skipping them entirely if they continue to stall.
 
 ---
+
+## 2026-02-09T01:05:00+10:00 — Incident A10: RSS ingest hangs mid-run despite per-request timeouts
+- **Symptom:** `ingest_rss.py` stalled indefinitely around feed 38/55 with no further output; the `(5, t)` connect/read timeout tuple did not prevent the hang.
+- **Root cause:** `requests.get(timeout=(connect, read))` resets the read timer on every chunk received. Servers that trickle data slowly enough (or stall after sending headers) can defeat the timeout across all 3 retry attempts, causing unbounded wall-clock time per feed.
+- **Fix:**
+  1. Wrapped each `discover_urls()` call in `concurrent.futures.ThreadPoolExecutor` with a hard wall-clock deadline of `max(timeout*3+10, 45)` seconds — if the feed doesn't complete in that window, a `TimeoutError` is raised and the feed is counted as failed.
+  2. Added `flush=True` to all `print()` calls in the RSS path so log output appears in real time (previously line-buffered, making it impossible to tell which feed was stalling).
+- **Validation:** Ran full pipeline: all 55 feeds completed (0 failures), 80 URLs discovered, `ingest_docs.py` completed (all docs already ingested — hash match), exit code 0. Total wall-clock ~2 min vs previous indefinite hang.
+- **Follow-ups:** Consider adding the same wall-clock timeout pattern to `ingest_docs.py` for individual URL fetches; monitor for any feeds that now hit the 45s deadline regularly.
+
+---
