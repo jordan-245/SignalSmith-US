@@ -18,6 +18,7 @@ Ad-hoc:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import os
 import subprocess
@@ -95,7 +96,7 @@ def discover_urls(feed_url: str, timeout: int, verbose: bool = True) -> List[str
     ua = {"User-Agent": "SignalSmith/0.1 (rss-discovery; +https://srv1281557.hstgr.cloud; research bot)"}
 
     if verbose:
-        print(f"[rss] Fetching: {feed_url}")
+        print(f"[rss] Fetching: {feed_url}", flush=True)
 
     last_exc: Exception | None = None
     for attempt in range(1, 3 + 1):
@@ -115,7 +116,7 @@ def discover_urls(feed_url: str, timeout: int, verbose: bool = True) -> List[str
                 if link not in urls:
                     urls.append(link)
             if verbose:
-                print(f"[rss]   → {len(urls)} URL(s)")
+                print(f"[rss]   → {len(urls)} URL(s)", flush=True)
             return urls
         except Exception as exc:
             last_exc = exc
@@ -126,7 +127,7 @@ def discover_urls(feed_url: str, timeout: int, verbose: bool = True) -> List[str
                 time.sleep(1.5 * attempt)
 
     if verbose:
-        print(f"[rss]   → FAILED ({last_exc})")
+        print(f"[rss]   → FAILED ({last_exc})", flush=True)
     raise last_exc or RuntimeError("Failed to fetch feed")
 
 
@@ -140,15 +141,25 @@ def main() -> None:
     print(f"[rss] Loaded {len(feeds)} feed(s)")
     urls: List[str] = []
     feed_failures = 0
+    # Hard wall-clock limit per feed (retries × read-timeout can stall the
+    # whole run when a server trickles data just slowly enough to reset the
+    # read-timeout repeatedly).  45 s covers 3 retries × 10-15 s with margin.
+    wall_limit = max(args.timeout * 3 + 10, 45)
     for idx, f in enumerate(feeds, 1):
         try:
-            print(f"[rss] [{idx}/{len(feeds)}] {f}")
-            for u in discover_urls(f, args.timeout, verbose=True):
+            print(f"[rss] [{idx}/{len(feeds)}] {f}", flush=True)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(discover_urls, f, args.timeout, True)
+                try:
+                    result = future.result(timeout=wall_limit)
+                except concurrent.futures.TimeoutError:
+                    raise TimeoutError(f"wall-clock limit {wall_limit}s exceeded")
+            for u in result:
                 if u not in urls:
                     urls.append(u)
         except Exception as exc:
             feed_failures += 1
-            print(f"[rss]   → FAILED: {exc}")
+            print(f"[rss]   → FAILED: {exc}", flush=True)
 
     if not urls:
         journal_run("ingest_rss", "ok", f"feeds={len(feeds)} urls=0 failures={feed_failures}")
