@@ -112,3 +112,14 @@ Rules:
 - **Follow-ups:** Consider adding the same wall-clock timeout pattern to `ingest_docs.py` for individual URL fetches; monitor for any feeds that now hit the 45s deadline regularly.
 
 ---
+
+## 2026-02-10T12:05:00+10:00 — Incident A11: RSS ingest killed by OpenClaw timeout
+- **Symptom:** `ingest_rss.py` (cron job `b69ea687-55a6-46fa-8595-07c2e8891f1e`) processed 36/55 feeds and then was killed by SIGKILL; process did not complete.
+- **Root cause:** Job was recently changed to use `--max-items 80` (from 30), which increased runtime beyond the default OpenClaw agent turn timeout (~2 minutes). The job payload had no explicit `timeoutSeconds` parameter, so it used the default.
+- **Fix:** Added `"timeoutSeconds": 300` (5 minutes) to the cron job payload via `openclaw cron update`.
+- **Validation:** Will validate on next hourly run (scheduled for 13:05 UTC). Expected: all 55 feeds complete without SIGKILL.
+- **Follow-ups:** 
+  - Monitor next run to confirm 5 min is sufficient for 55 feeds × 80 items
+  - Consider reducing `--max-items` back to 50 if runtime still exceeds ~3 minutes (trade-off: coverage vs reliability)
+  - Document that OpenClaw cron jobs with heavy network I/O (RSS, scraping) should always set explicit timeouts
+
