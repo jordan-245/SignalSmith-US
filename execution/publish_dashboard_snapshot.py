@@ -17,6 +17,7 @@ NOTE: Uses SUPABASE_SERVICE_ROLE locally to generate the snapshot, but outputs c
 
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import html
 import json
@@ -31,6 +32,7 @@ from dotenv import load_dotenv
 REPO = Path(__file__).resolve().parents[1]
 OUT_DIR = Path(os.getenv("DASHBOARD_OUT_DIR", str(Path("/var/www/signalsmith"))))
 LEAD_PIPELINE = REPO / "docs" / "LEAD_PIPELINE.md"
+NRL_PREDICTIONS_DIR = Path("/srv/NRL-Predict/outputs/predictions")
 
 
 def load_env() -> None:
@@ -168,6 +170,158 @@ def render_html() -> str:
     return (OUT_DIR / "index.html").read_text(encoding="utf-8") if (OUT_DIR / "index.html").exists() else ""
 
 
+def load_nrl_predictions(now_utc: dt.datetime) -> Dict[str, Any]:
+    """Load NRL predictions and calculate betting alerts.
+    
+    Returns:
+        Dictionary containing:
+        - model_status: "OK" | "STALE" | "MISSING"
+        - last_update: ISO timestamp
+        - upcoming_games: list of games in next 30 days
+        - todays_tips: tips for today
+        - betting_alerts: 5%+ edge opportunities
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        aest = ZoneInfo("Australia/Brisbane")
+    except Exception:
+        aest = dt.timezone.utc
+    
+    now_aest = now_utc.astimezone(aest)
+    
+    result = {
+        "model_status": "MISSING",
+        "last_update": None,
+        "upcoming_games": [],
+        "todays_tips": [],
+        "betting_alerts": []
+    }
+    
+    # Find latest prediction CSV
+    if not NRL_PREDICTIONS_DIR.exists():
+        return result
+    
+    csv_files = list(NRL_PREDICTIONS_DIR.glob("*.csv"))
+    if not csv_files:
+        return result
+    
+    # Get most recent file
+    latest_file = max(csv_files, key=lambda p: p.stat().st_mtime)
+    file_age = now_utc.timestamp() - latest_file.stat().st_mtime
+    
+    result["last_update"] = dt.datetime.fromtimestamp(
+        latest_file.stat().st_mtime, tz=dt.timezone.utc
+    ).replace(microsecond=0).isoformat()
+    
+    # Check if stale (older than 7 days)
+    if file_age > 7 * 24 * 3600:
+        result["model_status"] = "STALE"
+    else:
+        result["model_status"] = "OK"
+    
+    # Parse predictions
+    try:
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            predictions = list(reader)
+        
+        today_str = now_aest.date().isoformat()
+        cutoff_date = now_aest + dt.timedelta(days=30)  # Show games up to 30 days out
+        
+        for pred in predictions:
+            try:
+                # Parse game date
+                game_date_str = pred.get('date', '')
+                game_dt = dt.datetime.fromisoformat(game_date_str.replace(' ', 'T'))
+                
+                # Make timezone-aware if naive
+                if game_dt.tzinfo is None:
+                    game_dt = game_dt.replace(tzinfo=aest)
+                
+                # Skip past games
+                if game_dt < now_aest:
+                    continue
+                
+                # Parse probabilities and odds
+                home_prob = float(pred.get('home_win_prob', 0))
+                away_prob = float(pred.get('away_win_prob', 0))
+                odds_home_prob = float(pred.get('odds_home_prob', 0))
+                odds_away_prob = float(pred.get('odds_away_prob', 0))
+                
+                # Calculate implied odds (inverse of probability)
+                home_odds = 1.0 / odds_home_prob if odds_home_prob > 0 else 0
+                away_odds = 1.0 / odds_away_prob if odds_away_prob > 0 else 0
+                
+                # Calculate edges
+                home_edge = home_prob - odds_home_prob
+                away_edge = away_prob - odds_away_prob
+                
+                game_data = {
+                    "home_team": pred.get('home_team', ''),
+                    "away_team": pred.get('away_team', ''),
+                    "venue": pred.get('venue', ''),
+                    "date": game_dt.isoformat(),
+                    "round": pred.get('round', ''),
+                    "tip": pred.get('tip', ''),
+                    "confidence": float(pred.get('confidence', 0)),
+                    "home_win_prob": round(home_prob, 3),
+                    "away_win_prob": round(away_prob, 3)
+                }
+                
+                # Add to upcoming games if within 30 days
+                if game_dt <= cutoff_date:
+                    result["upcoming_games"].append(game_data)
+                
+                # Add to today's tips
+                if game_dt.date().isoformat() == today_str:
+                    result["todays_tips"].append(game_data)
+                
+                # Check for betting alerts (5%+ edge)
+                MIN_EDGE = 0.05
+                if home_edge >= MIN_EDGE:
+                    result["betting_alerts"].append({
+                        "match": f"{game_data['home_team']} vs {game_data['away_team']}",
+                        "bet_on": game_data['home_team'],
+                        "date": game_dt.isoformat(),
+                        "model_prob": round(home_prob, 3),
+                        "odds": round(home_odds, 2),
+                        "edge": round(home_edge, 3),
+                        "venue": game_data['venue']
+                    })
+                
+                if away_edge >= MIN_EDGE:
+                    result["betting_alerts"].append({
+                        "match": f"{game_data['home_team']} vs {game_data['away_team']}",
+                        "bet_on": game_data['away_team'],
+                        "date": game_dt.isoformat(),
+                        "model_prob": round(away_prob, 3),
+                        "odds": round(away_odds, 2),
+                        "edge": round(away_edge, 3),
+                        "venue": game_data['venue']
+                    })
+            
+            except (ValueError, KeyError, TypeError) as e:
+                # Skip malformed rows
+                continue
+        
+        # Sort upcoming games by date
+        result["upcoming_games"].sort(key=lambda x: x['date'])
+        result["todays_tips"].sort(key=lambda x: x['date'])
+        result["betting_alerts"].sort(key=lambda x: x['edge'], reverse=True)
+        
+        # Limit to reasonable sizes
+        result["upcoming_games"] = result["upcoming_games"][:20]
+        result["todays_tips"] = result["todays_tips"][:10]
+        result["betting_alerts"] = result["betting_alerts"][:10]
+        
+    except Exception as e:
+        # If parsing fails, return minimal data
+        result["model_status"] = "ERROR"
+        result["error"] = str(e)
+    
+    return result
+
+
 def main() -> None:
     load_env()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -205,6 +359,9 @@ def main() -> None:
         except Exception:
             sector_brief = None
 
+    # Load NRL predictions
+    nrl_data = load_nrl_predictions(now)
+    
     payload: Dict[str, Any] = {
         "generated_at_utc": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "generated_at_aest": now_aest.replace(microsecond=0).isoformat(),
@@ -219,6 +376,7 @@ def main() -> None:
             "current_equity": (eq or {}).get("equity"),
             "max_drawdown": 0.0,
         },
+        "nrl": nrl_data,
     }
 
     (OUT_DIR / "dashboard.json").write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
