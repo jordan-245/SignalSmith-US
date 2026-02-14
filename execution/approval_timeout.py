@@ -14,7 +14,10 @@ import os
 from pathlib import Path
 from typing import Dict, List
 
+import time
+
 import requests
+from requests import Response
 from dotenv import load_dotenv
 
 
@@ -64,6 +67,45 @@ def supabase_headers() -> Dict[str, str]:
     }
 
 
+def supabase_request(
+    method: str,
+    url: str,
+    *,
+    headers: Dict[str, str],
+    params: Dict[str, str] | None = None,
+    json: object | None = None,
+    timeout: int = 30,
+    retries: int = 3,
+    backoff_s: float = 1.5,
+) -> Response:
+    """Best-effort Supabase HTTP with retry for transient network failures."""
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            return requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json,
+                timeout=timeout,
+            )
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout) as e:
+            last_exc = e
+        except requests.exceptions.SSLError as e:
+            # Occasionally we see TLS handshake timeouts to PostgREST.
+            last_exc = e
+        except requests.exceptions.ConnectionError as e:
+            last_exc = e
+
+        if attempt < retries:
+            sleep_s = backoff_s ** (attempt - 1)
+            print(f"[approval_timeout] WARN: Supabase request failed (attempt {attempt}/{retries}); retrying in {sleep_s:.1f}s: {last_exc}")
+            time.sleep(sleep_s)
+
+    raise RuntimeError(f"Supabase request failed after {retries} attempt(s): {last_exc}")
+
+
 def fetch_expired(cutoff: dt.datetime, limit: int) -> List[dict]:
     """Return expired approval rows.
 
@@ -79,7 +121,14 @@ def fetch_expired(cutoff: dt.datetime, limit: int) -> List[dict]:
         "order": "created_ts.asc",
         "limit": str(limit),
     }
-    resp = requests.get(url, headers=supabase_headers(), params=params, timeout=15)
+    resp = supabase_request(
+        "GET",
+        url,
+        headers=supabase_headers(),
+        params=params,
+        timeout=30,
+        retries=3,
+    )
 
     if resp.status_code == 404 and "PGRST205" in resp.text:
         print(
@@ -106,7 +155,15 @@ def mark_denied(cutoff: dt.datetime, now_iso: str, dry_run: bool) -> None:
         "approved_by": "auto_timeout",
         "approved_ts": now_iso,
     }
-    resp = requests.patch(url, headers=supabase_headers(), params=params, json=payload, timeout=15)
+    resp = supabase_request(
+        "PATCH",
+        url,
+        headers=supabase_headers(),
+        params=params,
+        json=payload,
+        timeout=30,
+        retries=3,
+    )
     if resp.status_code >= 300:
         raise RuntimeError(f"Supabase update failed: {resp.status_code} {resp.text}")
 
@@ -128,7 +185,14 @@ def insert_actions(requests_expired: List[dict], now_iso: str, timeout_minutes: 
     if dry_run:
         return
     url = f"{supabase_base()}/rest/v1/approval_actions"
-    resp = requests.post(url, headers=supabase_headers(), json=actions, timeout=15)
+    resp = supabase_request(
+        "POST",
+        url,
+        headers=supabase_headers(),
+        json=actions,
+        timeout=30,
+        retries=3,
+    )
     if resp.status_code >= 300:
         raise RuntimeError(f"Supabase insert failed: {resp.status_code} {resp.text}")
 

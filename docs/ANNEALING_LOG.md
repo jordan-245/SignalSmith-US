@@ -113,6 +113,15 @@ Rules:
 
 ---
 
+## 2026-02-14T17:30:00+10:00 — Incident A12: approval_timeout sweep failed due to Supabase TLS/read timeout
+- **Symptom:** `execution/approval_timeout.py --timeout-minutes 15 --notify-telegram` crashed with `_ssl.c:983 handshake timed out` / `requests.exceptions.ReadTimeout` when calling Supabase PostgREST.
+- **Root cause:** Supabase HTTP calls used a single 15s timeout and **no retry/backoff**, so transient network/TLS issues caused the cron sweep to fail.
+- **Fix:** Added `supabase_request()` helper with retry + exponential backoff for transient `ReadTimeout/ConnectTimeout/SSLError/ConnectionError`; increased per-call timeout to 30s and retries to 3 for GET/PATCH/POST.
+- **Validation:** Re-ran the sweep successfully (exit 0). No expired approvals found.
+- **Follow-ups:** If this continues, consider surfacing a single best-effort Telegram WARN when Supabase is unreachable (rate-limited) so failures don’t go silent.
+
+---
+
 ## 2026-02-10T12:05:00+10:00 — Incident A11: RSS ingest killed by OpenClaw timeout
 - **Symptom:** `ingest_rss.py` (cron job `b69ea687-55a6-46fa-8595-07c2e8891f1e`) processed 36/55 feeds and then was killed by SIGKILL; process did not complete.
 - **Root cause:** Job was recently changed to use `--max-items 80` (from 30), which increased runtime beyond the default OpenClaw agent turn timeout (~2 minutes). The job payload had no explicit `timeoutSeconds` parameter, so it used the default.
